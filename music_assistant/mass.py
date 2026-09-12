@@ -64,6 +64,7 @@ from music_assistant.controllers.config.retired_local_audio import (
 from music_assistant.controllers.dashboard import DashboardController
 from music_assistant.controllers.diagnostics import DiagnosticsController
 from music_assistant.controllers.discovery import DiscoveryController
+from music_assistant.controllers.genome import GenomeController
 from music_assistant.controllers.metadata import MetaDataController
 from music_assistant.controllers.music import MusicController
 from music_assistant.controllers.player_queues import PlayerQueuesController
@@ -224,6 +225,7 @@ class MusicAssistant:
     players: PlayerController
     player_queues: PlayerQueuesController
     discovery: DiscoveryController
+    genome: GenomeController
     streams: StreamsController
     translations: TranslationController
     diagnostics: DiagnosticsController
@@ -304,6 +306,7 @@ class MusicAssistant:
             tg.create_task(setup_controller(self.tasks))
             tg.create_task(setup_controller(self.streams))
             tg.create_task(setup_controller(self.music))
+            tg.create_task(setup_controller(self.genome))
             tg.create_task(setup_controller(self.metadata))
             tg.create_task(setup_controller(self.players))
             tg.create_task(setup_controller(self.player_queues))
@@ -315,6 +318,7 @@ class MusicAssistant:
             "tasks",
             "streams",
             "music",
+            "genome",
             "metadata",
             "players",
             "player_queues",
@@ -1202,6 +1206,7 @@ class MusicAssistant:
             self.streams.audio_analysis,
             self.diagnostics,
             self.dashboard,
+            self.genome,
         ):
             for attr_name in dir(cls):
                 if attr_name.startswith("__"):
@@ -1212,7 +1217,7 @@ class MusicAssistant:
                     continue
                 try:
                     obj = getattr(cls, attr_name)
-                except AttributeError, RuntimeError:
+                except (AttributeError, RuntimeError):
                     # Skip attributes that fail during initialization
                     continue
                 if hasattr(obj, "api_cmd"):
@@ -1235,6 +1240,7 @@ class MusicAssistant:
         self.players = PlayerController(self)
         self.player_queues = PlayerQueuesController(self)
         self.streams = StreamsController(self)
+        self.genome = GenomeController(self)
         self.translations = TranslationController(self)
         self.diagnostics = DiagnosticsController(self)
         self.dashboard = DashboardController(self)

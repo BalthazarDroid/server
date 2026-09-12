@@ -1,0 +1,32 @@
+{
+  "version": "test-v1",
+  "built_at": "2026-01-01T00:00:00Z",
+  "source": "test-fixture",
+  "sample_size": 8,
+  "genre_shares": {
+    "rock": 0.3,
+    "pop": 0.2,
+    "hip_hop": 0.15,
+    "electronic": 0.1,
+    "jazz": 0.1,
+    "folk": 0.05,
+    "metal": 0.05,
+    "classical": 0.05
+  },
+  "era_shares": {
+    "1980": 0.1,
+    "1990": 0.2,
+    "2000": 0.3,
+    "2010": 0.25,
+    "2020": 0.15
+  },
+  "listener_percentiles": {
+    "5": 10,
+    "10": 25,
+    "25": 60,
+    "50": 200,
+    "75": 900,
+    "90": 4000
+  },
+  "concentration": 0.05
+}

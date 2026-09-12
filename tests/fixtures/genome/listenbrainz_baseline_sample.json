@@ -1,0 +1,1230 @@
+{
+  "note": "Synthetic sample shaped like ListenBrainz's /1/popularity/artist (artist_mbid/total_listen_count/total_user_count) plus MusicBrainz artist-lookup tags and first-release-year, used ONLY to exercise scripts/build_genome_baseline.py in --fixture mode offline. No data drawn from a real user account.",
+  "artists": [
+    {
+      "artist_mbid": "mbid-0034",
+      "artist_name": "Vince Guaraldi Trio",
+      "tags": [
+        {
+          "name": "jazz",
+          "count": 15
+        },
+        {
+          "name": "soundtrack",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 210000,
+      "total_user_count": 8900,
+      "first_release_year": 1955
+    },
+    {
+      "artist_mbid": "mbid-0048",
+      "artist_name": "The Cathedral Choir",
+      "tags": [
+        {
+          "name": "church music",
+          "count": 8
+        },
+        {
+          "name": "choral",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 22000,
+      "total_user_count": 900,
+      "first_release_year": 1990
+    },
+    {
+      "artist_mbid": "mbid-0009",
+      "artist_name": "Miles Davis",
+      "tags": [
+        {
+          "name": "jazz",
+          "count": 35
+        },
+        {
+          "name": "bebop",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 2100000,
+      "total_user_count": 55000,
+      "first_release_year": 1944
+    },
+    {
+      "artist_mbid": "mbid-0031",
+      "artist_name": "Burna Boy",
+      "tags": [
+        {
+          "name": "afrobeats",
+          "count": 30
+        }
+      ],
+      "total_listen_count": 1100000,
+      "total_user_count": 41000,
+      "first_release_year": 2010
+    },
+    {
+      "artist_mbid": "mbid-0047",
+      "artist_name": "Mariah Carey",
+      "tags": [
+        {
+          "name": "christmas",
+          "count": 12
+        },
+        {
+          "name": "pop",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 3800000,
+      "total_user_count": 95000,
+      "first_release_year": 1990
+    },
+    {
+      "artist_mbid": "mbid-0037",
+      "artist_name": "Wu-Tang Clan",
+      "tags": [
+        {
+          "name": "east coast hip hop",
+          "count": 20
+        },
+        {
+          "name": "gangsta rap",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 1050000,
+      "total_user_count": 33000,
+      "first_release_year": 1992
+    },
+    {
+      "artist_mbid": "mbid-0050",
+      "artist_name": "Kraftwerk",
+      "tags": [
+        {
+          "name": "krautrock",
+          "count": 14
+        },
+        {
+          "name": "electronic",
+          "count": 22
+        }
+      ],
+      "total_listen_count": 720000,
+      "total_user_count": 24500,
+      "first_release_year": 1970
+    },
+    {
+      "artist_mbid": "mbid-0016",
+      "artist_name": "Celia Cruz",
+      "tags": [
+        {
+          "name": "salsa",
+          "count": 30
+        }
+      ],
+      "total_listen_count": 700000,
+      "total_user_count": 21000,
+      "first_release_year": 1950
+    },
+    {
+      "artist_mbid": "mbid-0041",
+      "artist_name": "Pete Seeger",
+      "tags": [
+        {
+          "name": "folk",
+          "count": 24
+        }
+      ],
+      "total_listen_count": 220000,
+      "total_user_count": 8400,
+      "first_release_year": 1940
+    },
+    {
+      "artist_mbid": "mbid-0040",
+      "artist_name": "Bill Monroe",
+      "tags": [
+        {
+          "name": "bluegrass",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 88000,
+      "total_user_count": 3100,
+      "first_release_year": 1939
+    },
+    {
+      "artist_mbid": "mbid-0030",
+      "artist_name": "Fela Kuti",
+      "tags": [
+        {
+          "name": "afrobeat",
+          "count": 25
+        }
+      ],
+      "total_listen_count": 320000,
+      "total_user_count": 12000,
+      "first_release_year": 1958
+    },
+    {
+      "artist_mbid": "mbid-0057",
+      "artist_name": "Astor Piazzolla",
+      "tags": [
+        {
+          "name": "tango",
+          "count": 20
+        },
+        {
+          "name": "nuevo tango",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 210000,
+      "total_user_count": 8600,
+      "first_release_year": 1955
+    },
+    {
+      "artist_mbid": "mbid-0062",
+      "artist_name": "DJ Screw",
+      "tags": [
+        {
+          "name": "chopped and screwed",
+          "count": 10
+        },
+        {
+          "name": "hip hop",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 260000,
+      "total_user_count": 9500,
+      "first_release_year": 1990
+    },
+    {
+      "artist_mbid": "mbid-0067",
+      "artist_name": "Yma Sumac",
+      "tags": [
+        {
+          "name": "exotica",
+          "count": 8
+        },
+        {
+          "name": "world",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 30000,
+      "total_user_count": 1300,
+      "first_release_year": 1950
+    },
+    {
+      "artist_mbid": "mbid-0053",
+      "artist_name": "Deadmau5",
+      "tags": [
+        {
+          "name": "electro house",
+          "count": 20
+        },
+        {
+          "name": "dance",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 1050000,
+      "total_user_count": 33000,
+      "first_release_year": 2005
+    },
+    {
+      "artist_mbid": "mbid-0008",
+      "artist_name": "Dolly Parton",
+      "tags": [
+        {
+          "name": "country",
+          "count": 30
+        }
+      ],
+      "total_listen_count": 3400000,
+      "total_user_count": 88000,
+      "first_release_year": 1959
+    },
+    {
+      "artist_mbid": "mbid-0060",
+      "artist_name": "The Village Marching Band",
+      "tags": [
+        {
+          "name": "marching band",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 9000,
+      "total_user_count": 380,
+      "first_release_year": 1985
+    },
+    {
+      "artist_mbid": "mbid-0026",
+      "artist_name": "Sigur Ros",
+      "tags": [
+        {
+          "name": "post-rock",
+          "count": 20
+        },
+        {
+          "name": "ambient",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 640000,
+      "total_user_count": 21000,
+      "first_release_year": 1994
+    },
+    {
+      "artist_mbid": "mbid-0059",
+      "artist_name": "The Squirrel Nut Zippers",
+      "tags": [
+        {
+          "name": "swing",
+          "count": 12
+        },
+        {
+          "name": "ragtime",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 45000,
+      "total_user_count": 1700,
+      "first_release_year": 1993
+    },
+    {
+      "artist_mbid": "mbid-0019",
+      "artist_name": "Aretha Franklin",
+      "tags": [
+        {
+          "name": "soul",
+          "count": 30
+        },
+        {
+          "name": "gospel",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 2400000,
+      "total_user_count": 71000,
+      "first_release_year": 1956
+    },
+    {
+      "artist_mbid": "mbid-0065",
+      "artist_name": "Rai Masters Ensemble",
+      "tags": [
+        {
+          "name": "rai",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 12000,
+      "total_user_count": 520,
+      "first_release_year": 1985
+    },
+    {
+      "artist_mbid": "mbid-0020",
+      "artist_name": "James Brown",
+      "tags": [
+        {
+          "name": "funk",
+          "count": 30
+        },
+        {
+          "name": "soul",
+          "count": 15
+        }
+      ],
+      "total_listen_count": 1900000,
+      "total_user_count": 58000,
+      "first_release_year": 1956
+    },
+    {
+      "artist_mbid": "mbid-0021",
+      "artist_name": "Parliament-Funkadelic",
+      "tags": [
+        {
+          "name": "funk",
+          "count": 25
+        }
+      ],
+      "total_listen_count": 480000,
+      "total_user_count": 15000,
+      "first_release_year": 1968
+    },
+    {
+      "artist_mbid": "mbid-0056",
+      "artist_name": "The Klezmatics",
+      "tags": [
+        {
+          "name": "klezmer",
+          "count": 14
+        }
+      ],
+      "total_listen_count": 18000,
+      "total_user_count": 780,
+      "first_release_year": 1986
+    },
+    {
+      "artist_mbid": "mbid-0051",
+      "artist_name": "Skrillex",
+      "tags": [
+        {
+          "name": "dubstep",
+          "count": 22
+        },
+        {
+          "name": "electronic",
+          "count": 18
+        }
+      ],
+      "total_listen_count": 2100000,
+      "total_user_count": 62000,
+      "first_release_year": 2004
+    },
+    {
+      "artist_mbid": "mbid-0074",
+      "artist_name": "Deuter",
+      "tags": [
+        {
+          "name": "wellness",
+          "count": 10
+        },
+        {
+          "name": "new age",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 42000,
+      "total_user_count": 1800,
+      "first_release_year": 1971
+    },
+    {
+      "artist_mbid": "mbid-0058",
+      "artist_name": "Strauss Waltz Orchestra",
+      "tags": [
+        {
+          "name": "waltz",
+          "count": 10
+        },
+        {
+          "name": "classical",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 30000,
+      "total_user_count": 1200,
+      "first_release_year": 1900
+    },
+    {
+      "artist_mbid": "mbid-0066",
+      "artist_name": "Om Kalthoum",
+      "tags": [
+        {
+          "name": "middle eastern",
+          "count": 14
+        },
+        {
+          "name": "arabic classical",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 95000,
+      "total_user_count": 4200,
+      "first_release_year": 1934
+    },
+    {
+      "artist_mbid": "mbid-0043",
+      "artist_name": "Leonard Cohen",
+      "tags": [
+        {
+          "name": "singer-songwriter",
+          "count": 22
+        }
+      ],
+      "total_listen_count": 440000,
+      "total_user_count": 15600,
+      "first_release_year": 1967
+    },
+    {
+      "artist_mbid": "mbid-0052",
+      "artist_name": "Diplo",
+      "tags": [
+        {
+          "name": "dance",
+          "count": 24
+        },
+        {
+          "name": "electronic",
+          "count": 14
+        }
+      ],
+      "total_listen_count": 1700000,
+      "total_user_count": 51000,
+      "first_release_year": 2004
+    },
+    {
+      "artist_mbid": "mbid-0024",
+      "artist_name": "Joy Division",
+      "tags": [
+        {
+          "name": "post-punk",
+          "count": 20
+        },
+        {
+          "name": "dark wave",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 520000,
+      "total_user_count": 17000,
+      "first_release_year": 1976
+    },
+    {
+      "artist_mbid": "mbid-0003",
+      "artist_name": "Daft Punk",
+      "tags": [
+        {
+          "name": "french house",
+          "count": 30
+        },
+        {
+          "name": "electronic",
+          "count": 25
+        }
+      ],
+      "total_listen_count": 7100000,
+      "total_user_count": 180000,
+      "first_release_year": 1993
+    },
+    {
+      "artist_mbid": "mbid-0017",
+      "artist_name": "Bob Marley & The Wailers",
+      "tags": [
+        {
+          "name": "reggae",
+          "count": 35
+        }
+      ],
+      "total_listen_count": 3100000,
+      "total_user_count": 92000,
+      "first_release_year": 1963
+    },
+    {
+      "artist_mbid": "mbid-0054",
+      "artist_name": "Trentem\u00f8ller",
+      "tags": [
+        {
+          "name": "dark ambient",
+          "count": 10
+        },
+        {
+          "name": "electronic",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 55000,
+      "total_user_count": 2100,
+      "first_release_year": 1997
+    },
+    {
+      "artist_mbid": "mbid-0023",
+      "artist_name": "Dead Kennedys",
+      "tags": [
+        {
+          "name": "hardcore punk",
+          "count": 20
+        },
+        {
+          "name": "punk",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 190000,
+      "total_user_count": 6800,
+      "first_release_year": 1978
+    },
+    {
+      "artist_mbid": "mbid-0061",
+      "artist_name": "Scott Joplin Revival Ensemble",
+      "tags": [
+        {
+          "name": "ragtime",
+          "count": 14
+        }
+      ],
+      "total_listen_count": 21000,
+      "total_user_count": 900,
+      "first_release_year": 1899
+    },
+    {
+      "artist_mbid": "mbid-0025",
+      "artist_name": "Depeche Mode",
+      "tags": [
+        {
+          "name": "synth-pop",
+          "count": 25
+        },
+        {
+          "name": "dark wave",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 1600000,
+      "total_user_count": 46000,
+      "first_release_year": 1980
+    },
+    {
+      "artist_mbid": "mbid-0006",
+      "artist_name": "Nas",
+      "tags": [
+        {
+          "name": "east coast hip hop",
+          "count": 22
+        },
+        {
+          "name": "hip hop",
+          "count": 18
+        }
+      ],
+      "total_listen_count": 2600000,
+      "total_user_count": 65000,
+      "first_release_year": 1991
+    },
+    {
+      "artist_mbid": "mbid-0007",
+      "artist_name": "Taylor Swift",
+      "tags": [
+        {
+          "name": "pop",
+          "count": 45
+        },
+        {
+          "name": "country pop",
+          "count": 15
+        }
+      ],
+      "total_listen_count": 15200000,
+      "total_user_count": 410000,
+      "first_release_year": 2004
+    },
+    {
+      "artist_mbid": "mbid-0044",
+      "artist_name": "\u00c9dith Piaf",
+      "tags": [
+        {
+          "name": "chanson",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 190000,
+      "total_user_count": 7200,
+      "first_release_year": 1935
+    },
+    {
+      "artist_mbid": "mbid-0071",
+      "artist_name": "The Poetry Foundation Sessions",
+      "tags": [
+        {
+          "name": "spoken word",
+          "count": 10
+        },
+        {
+          "name": "poetry",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 8500,
+      "total_user_count": 340,
+      "first_release_year": 1998
+    },
+    {
+      "artist_mbid": "mbid-0010",
+      "artist_name": "John Coltrane",
+      "tags": [
+        {
+          "name": "jazz",
+          "count": 30
+        },
+        {
+          "name": "free jazz",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 1500000,
+      "total_user_count": 39000,
+      "first_release_year": 1945
+    },
+    {
+      "artist_mbid": "mbid-0049",
+      "artist_name": "Weird Al Yankovic",
+      "tags": [
+        {
+          "name": "comedy",
+          "count": 18
+        },
+        {
+          "name": "parody",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 180000,
+      "total_user_count": 8100,
+      "first_release_year": 1979
+    },
+    {
+      "artist_mbid": "mbid-0022",
+      "artist_name": "Ramones",
+      "tags": [
+        {
+          "name": "punk",
+          "count": 30
+        },
+        {
+          "name": "punk rock",
+          "count": 15
+        }
+      ],
+      "total_listen_count": 780000,
+      "total_user_count": 26000,
+      "first_release_year": 1974
+    },
+    {
+      "artist_mbid": "mbid-0064",
+      "artist_name": "Skepta",
+      "tags": [
+        {
+          "name": "grime",
+          "count": 18
+        },
+        {
+          "name": "hip hop",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 380000,
+      "total_user_count": 13800,
+      "first_release_year": 2004
+    },
+    {
+      "artist_mbid": "mbid-0068",
+      "artist_name": "Test Dept.",
+      "tags": [
+        {
+          "name": "industrial",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 15000,
+      "total_user_count": 640,
+      "first_release_year": 1981
+    },
+    {
+      "artist_mbid": "mbid-0011",
+      "artist_name": "Beethoven (London Symphony Orchestra)",
+      "tags": [
+        {
+          "name": "classical",
+          "count": 40
+        }
+      ],
+      "total_listen_count": 900000,
+      "total_user_count": 24000,
+      "first_release_year": 1782
+    },
+    {
+      "artist_mbid": "mbid-0001",
+      "artist_name": "The Rolling Stones",
+      "tags": [
+        {
+          "name": "classic rock",
+          "count": 40
+        },
+        {
+          "name": "rock",
+          "count": 30
+        }
+      ],
+      "total_listen_count": 9800000,
+      "total_user_count": 210000,
+      "first_release_year": 1962
+    },
+    {
+      "artist_mbid": "mbid-0072",
+      "artist_name": "Gil Scott-Heron",
+      "tags": [
+        {
+          "name": "spoken word",
+          "count": 12
+        },
+        {
+          "name": "soul",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 190000,
+      "total_user_count": 7100,
+      "first_release_year": 1970
+    },
+    {
+      "artist_mbid": "mbid-0038",
+      "artist_name": "N.W.A",
+      "tags": [
+        {
+          "name": "gangsta rap",
+          "count": 28
+        },
+        {
+          "name": "hip hop",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 690000,
+      "total_user_count": 22000,
+      "first_release_year": 1986
+    },
+    {
+      "artist_mbid": "mbid-0073",
+      "artist_name": "Enya",
+      "tags": [
+        {
+          "name": "new age",
+          "count": 20
+        },
+        {
+          "name": "celtic",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 1100000,
+      "total_user_count": 34000,
+      "first_release_year": 1987
+    },
+    {
+      "artist_mbid": "mbid-0063",
+      "artist_name": "Future",
+      "tags": [
+        {
+          "name": "trap",
+          "count": 26
+        },
+        {
+          "name": "hip hop",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 3600000,
+      "total_user_count": 95000,
+      "first_release_year": 2004
+    },
+    {
+      "artist_mbid": "mbid-0027",
+      "artist_name": "Brian Eno",
+      "tags": [
+        {
+          "name": "ambient",
+          "count": 30
+        }
+      ],
+      "total_listen_count": 310000,
+      "total_user_count": 12500,
+      "first_release_year": 1971
+    },
+    {
+      "artist_mbid": "mbid-0035",
+      "artist_name": "Hans Zimmer",
+      "tags": [
+        {
+          "name": "soundtrack",
+          "count": 30
+        },
+        {
+          "name": "orchestral",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 1400000,
+      "total_user_count": 44000,
+      "first_release_year": 1988
+    },
+    {
+      "artist_mbid": "mbid-0045",
+      "artist_name": "Vitamin String Quartet",
+      "tags": [
+        {
+          "name": "wedding",
+          "count": 6
+        },
+        {
+          "name": "classical crossover",
+          "count": 5
+        }
+      ],
+      "total_listen_count": 60000,
+      "total_user_count": 2200,
+      "first_release_year": 2000
+    },
+    {
+      "artist_mbid": "mbid-0042",
+      "artist_name": "Nick Drake",
+      "tags": [
+        {
+          "name": "folk",
+          "count": 18
+        },
+        {
+          "name": "singer-songwriter",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 260000,
+      "total_user_count": 10100,
+      "first_release_year": 1969
+    },
+    {
+      "artist_mbid": "mbid-0046",
+      "artist_name": "Raffi",
+      "tags": [
+        {
+          "name": "children's music",
+          "count": 14
+        }
+      ],
+      "total_listen_count": 45000,
+      "total_user_count": 1800,
+      "first_release_year": 1974
+    },
+    {
+      "artist_mbid": "mbid-0013",
+      "artist_name": "Metallica",
+      "tags": [
+        {
+          "name": "thrash metal",
+          "count": 30
+        },
+        {
+          "name": "metal",
+          "count": 25
+        }
+      ],
+      "total_listen_count": 5600000,
+      "total_user_count": 140000,
+      "first_release_year": 1981
+    },
+    {
+      "artist_mbid": "mbid-0075",
+      "artist_name": "Tibetan Singing Bowl Meditations",
+      "tags": [
+        {
+          "name": "wellness",
+          "count": 14
+        },
+        {
+          "name": "sound therapy",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 60000,
+      "total_user_count": 2600,
+      "first_release_year": 2010
+    },
+    {
+      "artist_mbid": "mbid-0002",
+      "artist_name": "Fleetwood Mac",
+      "tags": [
+        {
+          "name": "soft rock",
+          "count": 25
+        },
+        {
+          "name": "rock",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 6200000,
+      "total_user_count": 150000,
+      "first_release_year": 1967
+    },
+    {
+      "artist_mbid": "mbid-0039",
+      "artist_name": "Willie Nelson",
+      "tags": [
+        {
+          "name": "outlaw country",
+          "count": 22
+        },
+        {
+          "name": "country",
+          "count": 14
+        }
+      ],
+      "total_listen_count": 900000,
+      "total_user_count": 27000,
+      "first_release_year": 1956
+    },
+    {
+      "artist_mbid": "mbid-0033",
+      "artist_name": "Ravi Shankar",
+      "tags": [
+        {
+          "name": "indian classical",
+          "count": 18
+        },
+        {
+          "name": "hindustani classical",
+          "count": 6
+        }
+      ],
+      "total_listen_count": 88000,
+      "total_user_count": 3600,
+      "first_release_year": 1939
+    },
+    {
+      "artist_mbid": "mbid-0077",
+      "artist_name": "The Wiggles",
+      "tags": [
+        {
+          "name": "children's music",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 210000,
+      "total_user_count": 9200,
+      "first_release_year": 1991
+    },
+    {
+      "artist_mbid": "mbid-0028",
+      "artist_name": "Nils Frahm",
+      "tags": [
+        {
+          "name": "modern classical",
+          "count": 15
+        },
+        {
+          "name": "ambient",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 260000,
+      "total_user_count": 10200,
+      "first_release_year": 2005
+    },
+    {
+      "artist_mbid": "mbid-0069",
+      "artist_name": "Throbbing Gristle",
+      "tags": [
+        {
+          "name": "industrial",
+          "count": 10
+        },
+        {
+          "name": "experimental",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 22000,
+      "total_user_count": 980,
+      "first_release_year": 1975
+    },
+    {
+      "artist_mbid": "mbid-0076",
+      "artist_name": "Sfx Library",
+      "tags": [
+        {
+          "name": "sound effects",
+          "count": 12
+        }
+      ],
+      "total_listen_count": 5000,
+      "total_user_count": 220,
+      "first_release_year": 2000
+    },
+    {
+      "artist_mbid": "mbid-0005",
+      "artist_name": "Kendrick Lamar",
+      "tags": [
+        {
+          "name": "conscious hip hop",
+          "count": 35
+        },
+        {
+          "name": "hip hop",
+          "count": 30
+        }
+      ],
+      "total_listen_count": 8900000,
+      "total_user_count": 220000,
+      "first_release_year": 2003
+    },
+    {
+      "artist_mbid": "mbid-0055",
+      "artist_name": "Susumu Yokota",
+      "tags": [
+        {
+          "name": "field recording",
+          "count": 8
+        },
+        {
+          "name": "ambient",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 22000,
+      "total_user_count": 950,
+      "first_release_year": 1990
+    },
+    {
+      "artist_mbid": "mbid-0012",
+      "artist_name": "Yo-Yo Ma",
+      "tags": [
+        {
+          "name": "classical",
+          "count": 25
+        }
+      ],
+      "total_listen_count": 400000,
+      "total_user_count": 11000,
+      "first_release_year": 1978
+    },
+    {
+      "artist_mbid": "mbid-0070",
+      "artist_name": "John Cage Ensemble",
+      "tags": [
+        {
+          "name": "experimental",
+          "count": 16
+        },
+        {
+          "name": "avant-garde",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 40000,
+      "total_user_count": 1650,
+      "first_release_year": 1938
+    },
+    {
+      "artist_mbid": "mbid-0014",
+      "artist_name": "Black Sabbath",
+      "tags": [
+        {
+          "name": "heavy metal",
+          "count": 28
+        },
+        {
+          "name": "metal",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 4200000,
+      "total_user_count": 98000,
+      "first_release_year": 1968
+    },
+    {
+      "artist_mbid": "mbid-0018",
+      "artist_name": "Toots and the Maytals",
+      "tags": [
+        {
+          "name": "ska",
+          "count": 15
+        },
+        {
+          "name": "reggae",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 210000,
+      "total_user_count": 7500,
+      "first_release_year": 1962
+    },
+    {
+      "artist_mbid": "mbid-0029",
+      "artist_name": "Nusrat Fateh Ali Khan",
+      "tags": [
+        {
+          "name": "qawwali",
+          "count": 12
+        },
+        {
+          "name": "world",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 95000,
+      "total_user_count": 4100,
+      "first_release_year": 1965
+    },
+    {
+      "artist_mbid": "mbid-0032",
+      "artist_name": "Buena Vista Social Club",
+      "tags": [
+        {
+          "name": "son cubano",
+          "count": 15
+        },
+        {
+          "name": "latin",
+          "count": 10
+        }
+      ],
+      "total_listen_count": 260000,
+      "total_user_count": 9800,
+      "first_release_year": 1996
+    },
+    {
+      "artist_mbid": "mbid-0036",
+      "artist_name": "John Williams",
+      "tags": [
+        {
+          "name": "soundtrack",
+          "count": 32
+        },
+        {
+          "name": "classical",
+          "count": 8
+        }
+      ],
+      "total_listen_count": 1600000,
+      "total_user_count": 51000,
+      "first_release_year": 1958
+    },
+    {
+      "artist_mbid": "mbid-0004",
+      "artist_name": "Aphex Twin",
+      "tags": [
+        {
+          "name": "idm",
+          "count": 20
+        },
+        {
+          "name": "electronic",
+          "count": 15
+        }
+      ],
+      "total_listen_count": 1800000,
+      "total_user_count": 42000,
+      "first_release_year": 1985
+    },
+    {
+      "artist_mbid": "mbid-0015",
+      "artist_name": "Bad Bunny",
+      "tags": [
+        {
+          "name": "reggaeton",
+          "count": 40
+        },
+        {
+          "name": "latin trap",
+          "count": 20
+        }
+      ],
+      "total_listen_count": 9200000,
+      "total_user_count": 260000,
+      "first_release_year": 2016
+    }
+  ]
+}

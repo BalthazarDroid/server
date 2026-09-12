@@ -1,0 +1,67 @@
+{
+  "config_entries": {
+    "recency_half_life_days": {
+      "label": "Recency half-life (days)",
+      "description": "How quickly older listens fade out of the genome. Set to 0 to weigh every listen equally regardless of age."
+    },
+    "lastfm_username": {
+      "label": "Last.fm username",
+      "description": "Public Last.fm profile to import scrobble history from."
+    },
+    "lastfm_api_key": {
+      "label": "Last.fm API key",
+      "description": "API key used to poll Last.fm's recent-tracks history."
+    },
+    "lastfm_poll_enabled": {
+      "label": "Poll Last.fm automatically",
+      "description": "Periodically import new scrobbles from Last.fm."
+    },
+    "lastfm_poll_interval_hours": {
+      "label": "Last.fm poll interval (hours)",
+      "description": "How often to check Last.fm for new scrobbles."
+    },
+    "apple_import_dir": {
+      "label": "Apple Music export directory",
+      "description": "Server-side folder containing an already-extracted Apple Music Play Activity export, as an alternative to uploading it from the browser."
+    },
+    "enrich_enabled": {
+      "label": "Enrich with MusicBrainz/ListenBrainz",
+      "description": "Look up genres, release years and popularity for artists that appear in your listening history."
+    },
+    "obscurity_percentile": {
+      "label": "Obscurity threshold percentile",
+      "description": "Artists below this ListenBrainz listener-count percentile count toward the obscurity index."
+    },
+    "min_seconds_played": {
+      "label": "Minimum seconds played",
+      "description": "A listen must be played for at least this many seconds to count toward the genome."
+    },
+    "rebuild_schedule_hour": {
+      "label": "Daily rebuild hour",
+      "description": "Local hour of day (0-23) at which the genome is recomputed automatically."
+    },
+    "rebuild_now": {
+      "label": "Rebuild now",
+      "description": "Recompute the listening genome immediately."
+    },
+    "clear_genome_data": {
+      "label": "Clear genome data",
+      "description": "Delete all imported listens and cached genome results for this household."
+    }
+  },
+  "config_actions": {
+    "rebuild_now": {
+      "result": "The listening genome has been rebuilt"
+    },
+    "clear_genome_data": {
+      "result": "All genome data has been cleared"
+    }
+  },
+  "background_task": {
+    "genome_rebuild": "Listening genome rebuild"
+  },
+  "manifest": {
+    "name": "Listening Genome",
+    "description": "Computes a household listening fingerprint from Music Assistant playback, Apple Music exports and Last.fm history."
+  }
+}

@@ -331,6 +331,7 @@ CONFIGURABLE_CORE_CONTROLLERS = (
     "music",
     "player_queues",
     "tasks",
+    "genome",
 )
 VERBOSE_LOG_LEVEL: Final[int] = 5
 PROVIDERS_WITH_SHAREABLE_URLS = ("spotify", "qobuz", "apple_music", "deezer")

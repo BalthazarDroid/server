@@ -90,6 +90,8 @@ RESOLVE_NOT_FOUND_COOLDOWN_DAYS: Final[int] = 30
 
 # --- Apple Music CSV upload protocol (§3.3) ------------------------------------------
 
+GENOME_REBUILD_TASK_ID: Final[str] = "genome_rebuild"
+
 GENOME_UPLOADS_DIRNAME: Final[str] = "genome_uploads"
 GENOME_UPLOAD_CHUNK_MAX_B64_BYTES: Final[int] = 512 * 1024
 GENOME_UPLOAD_MAX_TOTAL_BYTES: Final[int] = 512 * 1024 * 1024
