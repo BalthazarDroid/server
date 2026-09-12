@@ -1,0 +1,29 @@
+{
+  "created": "2026-09-12T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "type": "Group",
+      "score": 100,
+      "name": "Radiohead",
+      "sort-name": "Radiohead",
+      "country": "GB",
+      "life-span": {
+        "begin": "1985",
+        "ended": null
+      },
+      "tags": [
+        {
+          "count": 8,
+          "name": "electronic"
+        },
+        {
+          "count": 6,
+          "name": "alternative rock"
+        }
+      ]
+    }
+  ]
+}

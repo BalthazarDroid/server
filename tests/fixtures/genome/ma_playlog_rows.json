@@ -1,0 +1,552 @@
+[
+  {
+    "item_id": "100",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Svefn-g-englar",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "7",
+        "provider": "library",
+        "name": "Sigur Rós",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1789145154,
+    "fully_played": 1,
+    "seconds_played": 200,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "101",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Hoppípolla",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "7",
+        "provider": "library",
+        "name": "Sigur Rós",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1788872313,
+    "fully_played": 1,
+    "seconds_played": 210,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "102",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Back In Black",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "8",
+        "provider": "library",
+        "name": "AC/DC",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1788599472,
+    "fully_played": 1,
+    "seconds_played": 220,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "103",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Highway to Hell",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "8",
+        "provider": "library",
+        "name": "AC/DC",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1788326631,
+    "fully_played": 1,
+    "seconds_played": 230,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "104",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Everything In Its Right Place",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "9",
+        "provider": "library",
+        "name": "Radiohead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1788053790,
+    "fully_played": 1,
+    "seconds_played": 240,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "105",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Idioteque",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "9",
+        "provider": "library",
+        "name": "Radiohead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1787780949,
+    "fully_played": 0,
+    "seconds_played": 12,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "106",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Roygbiv",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "10",
+        "provider": "library",
+        "name": "Boards of Canada",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1787508108,
+    "fully_played": 1,
+    "seconds_played": 210,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "107",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Dayvan Cowboy",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "10",
+        "provider": "library",
+        "name": "Boards of Canada",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1787235267,
+    "fully_played": 1,
+    "seconds_played": 220,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "108",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Glory Box",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "11",
+        "provider": "library",
+        "name": "Portishead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1786962426,
+    "fully_played": 1,
+    "seconds_played": 230,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "109",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Roads",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "11",
+        "provider": "library",
+        "name": "Portishead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1786689585,
+    "fully_played": 1,
+    "seconds_played": 240,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "110",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Pink Moon",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "12",
+        "provider": "library",
+        "name": "Nick Drake",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1786416744,
+    "fully_played": 1,
+    "seconds_played": 200,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "111",
+    "provider": "library",
+    "media_type": "track",
+    "name": "River Man",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "12",
+        "provider": "library",
+        "name": "Nick Drake",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1786143903,
+    "fully_played": 1,
+    "seconds_played": 210,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "112",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Svefn-g-englar",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "7",
+        "provider": "library",
+        "name": "Sigur Rós",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1785871062,
+    "fully_played": 1,
+    "seconds_played": 220,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "113",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Hoppípolla",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "7",
+        "provider": "library",
+        "name": "Sigur Rós",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1785598221,
+    "fully_played": 1,
+    "seconds_played": 230,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "114",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Back In Black",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "8",
+        "provider": "library",
+        "name": "AC/DC",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1785325380,
+    "fully_played": 1,
+    "seconds_played": 240,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "115",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Highway to Hell",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "8",
+        "provider": "library",
+        "name": "AC/DC",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1785052539,
+    "fully_played": 1,
+    "seconds_played": 200,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "116",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Everything In Its Right Place",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "9",
+        "provider": "library",
+        "name": "Radiohead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1784779698,
+    "fully_played": 1,
+    "seconds_played": 210,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "117",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Idioteque",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "9",
+        "provider": "library",
+        "name": "Radiohead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1784506857,
+    "fully_played": 0,
+    "seconds_played": 12,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "118",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Roygbiv",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "10",
+        "provider": "library",
+        "name": "Boards of Canada",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1784234016,
+    "fully_played": 1,
+    "seconds_played": 230,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "119",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Dayvan Cowboy",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "10",
+        "provider": "library",
+        "name": "Boards of Canada",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1783961175,
+    "fully_played": 1,
+    "seconds_played": 240,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "120",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Glory Box",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "11",
+        "provider": "library",
+        "name": "Portishead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1783688334,
+    "fully_played": 1,
+    "seconds_played": 200,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "121",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Roads",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "11",
+        "provider": "library",
+        "name": "Portishead",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1783415493,
+    "fully_played": 1,
+    "seconds_played": 210,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "122",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Pink Moon",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "12",
+        "provider": "library",
+        "name": "Nick Drake",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1783142652,
+    "fully_played": 1,
+    "seconds_played": 220,
+    "userid": "user-abc",
+    "queue_id": "player-office",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "123",
+    "provider": "library",
+    "media_type": "track",
+    "name": "River Man",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "12",
+        "provider": "library",
+        "name": "Nick Drake",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1782869811,
+    "fully_played": 1,
+    "seconds_played": 230,
+    "userid": "user-abc",
+    "queue_id": "player-living_room",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  },
+  {
+    "item_id": "124",
+    "provider": "library",
+    "media_type": "track",
+    "name": "Svefn-g-englar",
+    "image": null,
+    "artists": [
+      {
+        "item_id": "7",
+        "provider": "library",
+        "name": "Sigur Rós",
+        "media_type": "artist"
+      }
+    ],
+    "timestamp": 1782596970,
+    "fully_played": 1,
+    "seconds_played": 240,
+    "userid": "user-abc",
+    "queue_id": "player-kitchen",
+    "user_initiated": 1,
+    "playback_speed": 1.0
+  }
+]

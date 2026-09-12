@@ -1,0 +1,20 @@
+{
+  "created": "2026-09-12T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "0a8e97fd-457c-4746-9758-a4d8f8e5f5a9",
+      "type": "Person",
+      "score": 100,
+      "name": "Nick Drake",
+      "sort-name": "Nick Drake",
+      "country": "GB",
+      "life-span": {
+        "begin": "1948",
+        "ended": null
+      },
+      "tags": []
+    }
+  ]
+}

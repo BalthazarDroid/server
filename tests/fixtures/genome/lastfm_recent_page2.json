@@ -1,0 +1,37 @@
+{
+  "recenttracks": {
+    "@attr": {"user": "testuser", "totalPages": "2", "page": "2", "perPage": "200", "total": "23"},
+    "track": [
+      {
+        "artist": {"mbid": "", "#text": "Portishead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Third"},
+        "name": "The Rip",
+        "url": "https://www.last.fm/music/Portishead/_/The+Rip",
+        "date": {"uts": "1704810000", "#text": "9 Jan 2024, 15:40"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Nick Drake"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Bryter Layter"},
+        "name": "Northern Sky",
+        "url": "https://www.last.fm/music/Nick+Drake/_/Northern+Sky",
+        "date": {"uts": "1704800000", "#text": "9 Jan 2024, 12:53"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Radiohead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "OK Computer"},
+        "name": "Karma Police",
+        "url": "https://www.last.fm/music/Radiohead/_/Karma+Police",
+        "date": {"uts": "1704790000", "#text": "9 Jan 2024, 10:06"}
+      }
+    ]
+  }
+}
