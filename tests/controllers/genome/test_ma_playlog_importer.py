@@ -123,7 +123,8 @@ async def test_backfill_skips_rows_below_the_seconds_floor(tmp_path: Path) -> No
     store = await _new_store(tmp_path)
     try:
         mass = types.SimpleNamespace(
-            music=types.SimpleNamespace(database=library_db), subscribe=lambda *a, **k: (lambda: None)
+            music=types.SimpleNamespace(database=library_db),
+            subscribe=lambda *_a, **_k: lambda: None,
         )
         importer = MaPlaylogImporter(mass, store)
         result = await importer.backfill(min_seconds_played=30)
@@ -142,7 +143,8 @@ async def test_backfill_is_idempotent(tmp_path: Path) -> None:
     store = await _new_store(tmp_path)
     try:
         mass = types.SimpleNamespace(
-            music=types.SimpleNamespace(database=library_db), subscribe=lambda *a, **k: (lambda: None)
+            music=types.SimpleNamespace(database=library_db),
+            subscribe=lambda *_a, **_k: lambda: None,
         )
         importer = MaPlaylogImporter(mass, store)
         first = await importer.backfill()
@@ -167,7 +169,8 @@ async def test_backfill_caps_synthetic_plays_at_twenty(tmp_path: Path) -> None:
     store = await _new_store(tmp_path)
     try:
         mass = types.SimpleNamespace(
-            music=types.SimpleNamespace(database=library_db), subscribe=lambda *a, **k: (lambda: None)
+            music=types.SimpleNamespace(database=library_db),
+            subscribe=lambda *_a, **_k: lambda: None,
         )
         importer = MaPlaylogImporter(mass, store)
         result = await importer.backfill()
@@ -183,12 +186,19 @@ async def test_live_capture_appends_a_listen(tmp_path: Path) -> None:
     """PLAYLOG_UPDATED for a track event appends exactly one genome_listens row."""
     store = await _new_store(tmp_path)
     try:
-        async def fake_get(item_id: str, provider: str, recursive: bool = True) -> FakeTrack:
+
+        async def fake_get(
+            _item_id: str,
+            _provider: str,
+            recursive: bool = True,  # noqa: ARG001
+        ) -> FakeTrack:
+            # `recursive` is called by keyword (`mass.music.tracks.get(..., recursive=False)`),
+            # so it cannot be underscore-prefixed like the two positional args above
             return FakeTrack("Svefn-g-englar", "Sigur Rós", "Ágætis byrjun", 600)
 
         mass = types.SimpleNamespace(
             music=types.SimpleNamespace(tracks=types.SimpleNamespace(get=fake_get)),
-            subscribe=lambda *a, **k: (lambda: None),
+            subscribe=lambda *_a, **_k: lambda: None,
         )
         importer = MaPlaylogImporter(mass, store)
         update = PlaylogUpdate(
@@ -200,7 +210,7 @@ async def test_live_capture_appends_a_listen(tmp_path: Path) -> None:
         )
         await importer._on_playlog(FakeEvent(update))
         assert await store.count_listens("household") == 1
-        listen = [listen async for listen in store.iter_listens("household")][0]
+        listen = await anext(store.iter_listens("household"))
         assert listen.source == "ma_playlog"
         assert listen.player_id is None  # PlaylogUpdate carries no queue/player id
         assert listen.artist_key == "sigur ros"
@@ -213,7 +223,7 @@ async def test_live_capture_ignores_non_track_events(tmp_path: Path) -> None:
     store = await _new_store(tmp_path)
     try:
         mass = types.SimpleNamespace(
-            music=types.SimpleNamespace(tracks=None), subscribe=lambda *a, **k: (lambda: None)
+            music=types.SimpleNamespace(tracks=None), subscribe=lambda *_a, **_k: lambda: None
         )
         importer = MaPlaylogImporter(mass, store)
         update = PlaylogUpdate(
@@ -229,11 +239,11 @@ async def test_live_capture_ignores_non_track_events(tmp_path: Path) -> None:
         await store.close()
 
 
-def test_attach_subscribes_to_playlog_updated(tmp_path: Path) -> None:
+def test_attach_subscribes_to_playlog_updated() -> None:
     """attach() subscribes exactly the handler to PLAYLOG_UPDATED and returns the unsubscriber."""
     calls: list[Any] = []
 
-    def fake_subscribe(cb: Any, event_filter: Any = None, id_filter: Any = None) -> Any:
+    def fake_subscribe(cb: Any, event_filter: Any = None, _id_filter: Any = None) -> Any:
         calls.append((cb, event_filter))
         return lambda: None
 

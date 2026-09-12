@@ -33,6 +33,7 @@ Ambiguities resolved (§3.6 leaves these open; simplest/most defensible reading 
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -102,9 +103,7 @@ def listen_weight(listen: Listen, params: EngineParams) -> float:
         w_recency = 0.5 ** (age_days / params.half_life_days)
     if listen.fully_played:
         completion = 1.0
-    elif (
-        listen.played_ms is not None and listen.duration_ms is not None and listen.duration_ms > 0
-    ):
+    elif listen.played_ms is not None and listen.duration_ms is not None and listen.duration_ms > 0:
         completion = _clamp(listen.played_ms / listen.duration_ms, 0.0, 1.0)
     else:
         completion = 1.0
@@ -605,7 +604,7 @@ def _percentile_rank(listener_count: int, percentiles: Mapping[int, int]) -> flo
         return float(points[0][0])
     if listener_count >= points[-1][1]:
         return float(points[-1][0])
-    for (pct_lo, count_lo), (pct_hi, count_hi) in zip(points, points[1:], strict=False):
+    for (pct_lo, count_lo), (pct_hi, count_hi) in itertools.pairwise(points):
         if count_lo <= listener_count <= count_hi:
             if count_hi == count_lo:
                 return float(pct_lo)

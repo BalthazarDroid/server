@@ -103,8 +103,16 @@ async def test_source_counts_and_clear(tmp_path: Path) -> None:
     try:
         await store.add_listens([_listen(source="apple_export")], listener="household")
         await store.add_listens(
-            [_listen(artist_key="acdc", artist_name="AC/DC", track_key="backinblack",
-                     track_name="Back In Black", played_at=1_700_100_000, source="lastfm")],
+            [
+                _listen(
+                    artist_key="acdc",
+                    artist_name="AC/DC",
+                    track_key="backinblack",
+                    track_name="Back In Black",
+                    played_at=1_700_100_000,
+                    source="lastfm",
+                )
+            ],
             listener="household",
         )
         counts = await store.source_counts("household")
@@ -168,7 +176,9 @@ async def test_iter_listens_respects_since(tmp_path: Path) -> None:
             [_listen(played_at=1_700_000_000), _listen(played_at=1_800_000_000, source="lastfm")],
             listener="household",
         )
-        collected = [listen async for listen in store.iter_listens("household", since=1_750_000_000)]
+        collected = [
+            listen async for listen in store.iter_listens("household", since=1_750_000_000)
+        ]
         assert len(collected) == 1
         assert collected[0].played_at == 1_800_000_000
     finally:

@@ -23,7 +23,7 @@ from music_assistant.controllers.genome.models import GenomeImportResult, Listen
 from music_assistant.helpers.util import parse_title_and_version
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
     from music_assistant.controllers.genome.store import GenomeStore
 
@@ -161,14 +161,16 @@ async def import_play_activity(
         result["rows_imported"] += batch_result["rows_imported"]
         result["rows_duplicate"] += batch_result["rows_duplicate"]
         for key in ("first_played_at", "last_played_at"):
-            value = batch_result[key]  # type: ignore[literal-required]
+            value = batch_result[key]
             if value is None:
                 continue
-            current = result[key]  # type: ignore[literal-required]
-            if current is None or (key == "first_played_at" and value < current) or (
-                key == "last_played_at" and value > current
+            current = result[key]
+            if (
+                current is None
+                or (key == "first_played_at" and value < current)
+                or (key == "last_played_at" and value > current)
             ):
-                result[key] = value  # type: ignore[literal-required]
+                result[key] = value
         batch.clear()
 
     async for listen in parse_play_activity(path, min_seconds=min_seconds, stats=stats):
@@ -206,7 +208,7 @@ def _open_csv(path: str) -> Any:
         return candidate
 
 
-def _build_field_map(fieldnames: tuple[str, ...] | list[str]) -> dict[str, str]:
+def _build_field_map(fieldnames: Sequence[str]) -> dict[str, str]:
     """Map canonical column names to the actual header text present in this file's header row."""
     canonical_lookup = {name.lower(): name for name in _CANONICAL_COLUMNS}
     field_map: dict[str, str] = {}
@@ -275,7 +277,7 @@ def _parse_row(
 
 def _parse_timestamp(value: str) -> int:
     """Parse an Apple export ISO-8601 timestamp (``Z``-suffixed) to unix seconds."""
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    dt = datetime.fromisoformat(value)
     return int(dt.timestamp())
 
 

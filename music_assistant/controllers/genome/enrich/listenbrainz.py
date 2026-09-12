@@ -29,9 +29,7 @@ class Popularity:
     listen_count: int
 
 
-async def artist_popularity(
-    mbids: Sequence[str], *, client: HttpClient
-) -> dict[str, Popularity]:
+async def artist_popularity(mbids: Sequence[str], *, client: HttpClient) -> dict[str, Popularity]:
     """
     Fetch global popularity for a batch of MusicBrainz artist IDs.
 
@@ -48,9 +46,7 @@ async def artist_popularity(
         batch = unique_mbids[start : start + LISTENBRAINZ_POPULARITY_BATCH_SIZE]
         if not batch:
             continue
-        data = await client.post_json(
-            LISTENBRAINZ_POPULARITY_URL, json={"artist_mbids": batch}
-        )
+        data = await client.post_json(LISTENBRAINZ_POPULARITY_URL, json={"artist_mbids": batch})
         for item in (data or {}).get("payload", []):
             mbid = item.get("artist_mbid")
             if not mbid:

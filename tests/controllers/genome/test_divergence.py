@@ -18,12 +18,14 @@ FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "genome" / "ba
 
 
 def test_js_divergence_is_symmetric() -> None:
+    """Test js divergence is symmetric."""
     p = {"rock": 0.6, "pop": 0.4}
     q = {"rock": 0.1, "pop": 0.2, "jazz": 0.7}
     assert abs(engine.js_divergence(p, q) - engine.js_divergence(q, p)) < 1e-12
 
 
 def test_js_divergence_bounded_zero_to_one() -> None:
+    """Test js divergence bounded zero to one."""
     p = {"rock": 0.9, "pop": 0.05, "jazz": 0.05}
     q = {"rock": 0.1, "pop": 0.1, "jazz": 0.8}
     jsd = engine.js_divergence(p, q)
@@ -32,17 +34,20 @@ def test_js_divergence_bounded_zero_to_one() -> None:
 
 def test_js_divergence_empty_household_vector_is_zero_not_maximal() -> None:
     # An empty genome (no genre data yet) must not read as "100% divergent from the baseline".
+    """Test js divergence empty household vector is zero not maximal."""
     assert engine.js_divergence({}, {"rock": 1.0}) == 0.0
     assert engine.js_divergence({"rock": 1.0}, {}) == 0.0
 
 
 def test_js_contributions_all_zero_when_one_side_empty() -> None:
+    """Test js contributions all zero when one side empty."""
     contributions = engine.js_contributions({}, {"rock": 0.5, "pop": 0.5})
     assert set(contributions) == {"rock", "pop"}
     assert all(value == 0.0 for value in contributions.values())
 
 
 def test_divergence_facts_ratio_is_clamped() -> None:
+    """Test divergence facts ratio is clamped."""
     p = {"niche": 0.5, "rock": 0.5}
     q = {"niche": 1e-9, "rock": 0.5}
     facts = engine.divergence_facts(p, q, {"niche": "Niche", "rock": "Rock"})
@@ -51,6 +56,7 @@ def test_divergence_facts_ratio_is_clamped() -> None:
 
 
 def test_divergence_facts_percent_matches_score() -> None:
+    """Test divergence facts percent matches score."""
     p = {"rock": 1.0}
     q = {"pop": 1.0}
     facts = engine.divergence_facts(p, q, {"rock": "Rock", "pop": "Pop"})
@@ -70,6 +76,7 @@ def test_divergence_against_shipped_test_baseline() -> None:
 
 
 def test_divergence_against_shipped_test_baseline_when_household_differs() -> None:
+    """Test divergence against shipped test baseline when household differs."""
     baseline = asyncio.run(load_baseline(str(FIXTURE_PATH)))
     # household listens to nothing but the baseline's smallest genre
     smallest_key = min(baseline.genre_shares, key=lambda key: baseline.genre_shares[key])

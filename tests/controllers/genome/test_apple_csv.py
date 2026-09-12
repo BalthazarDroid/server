@@ -41,9 +41,7 @@ async def test_parse_play_activity_filters_and_counts() -> None:
 
 async def test_parse_play_activity_handles_lucene_and_non_ascii_artists() -> None:
     """AC/DC (Lucene-special) and Sigur Rós (non-ASCII) both parse to sane keys."""
-    listens = [
-        listen async for listen in parse_play_activity(FIXTURE_CSV, min_seconds=30)
-    ]
+    listens = [listen async for listen in parse_play_activity(FIXTURE_CSV, min_seconds=30)]
     artist_names = {listen.artist_name for listen in listens}
     assert "AC/DC" in artist_names
     assert "Sigur Rós" in artist_names
@@ -53,11 +51,11 @@ async def test_parse_play_activity_handles_lucene_and_non_ascii_artists() -> Non
 
 async def test_parse_play_activity_filters_short_and_wrong_media_type() -> None:
     """Short MANUALLY_SELECTED plays, FAILED_TO_LOAD, and VIDEO rows never become listens."""
-    listens = [
-        listen async for listen in parse_play_activity(FIXTURE_CSV, min_seconds=30)
-    ]
+    listens = [listen async for listen in parse_play_activity(FIXTURE_CSV, min_seconds=30)]
     assert all(listen.fully_played for listen in listens)
-    assert not any(name == "Karma Police (Video)" for name in (listen.track_name for listen in listens))
+    assert not any(
+        name == "Karma Police (Video)" for name in (listen.track_name for listen in listens)
+    )
     assert not any(listen.track_name == "Weird Fishes" for listen in listens)
 
 
@@ -85,7 +83,9 @@ async def test_import_play_activity_is_idempotent(tmp_path: Path) -> None:
     store = await _new_store(tmp_path)
     try:
         await import_play_activity(store, FIXTURE_CSV, listener="household", min_seconds=30)
-        second = await import_play_activity(store, FIXTURE_CSV, listener="household", min_seconds=30)
+        second = await import_play_activity(
+            store, FIXTURE_CSV, listener="household", min_seconds=30
+        )
         assert second["rows_imported"] == 0
         assert await store.count_listens("household") == 13
     finally:

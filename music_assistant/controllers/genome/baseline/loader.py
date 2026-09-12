@@ -34,12 +34,16 @@ async def load_baseline(path: str = BASELINE_V1_PATH) -> Baseline:
     try:
         raw = await load_json_dict(path)
     except (OSError, TypeError, ValueError) as err:
-        LOGGER.warning("Could not read genome baseline at %s (%s); using a uniform baseline", path, err)
+        LOGGER.warning(
+            "Could not read genome baseline at %s (%s); using a uniform baseline", path, err
+        )
         return uniform_baseline()
     try:
         return _parse_and_validate(raw)
     except _BaselineValidationError as err:
-        LOGGER.warning("Genome baseline at %s failed validation (%s); using a uniform baseline", path, err)
+        LOGGER.warning(
+            "Genome baseline at %s failed validation (%s); using a uniform baseline", path, err
+        )
         return uniform_baseline()
 
 

@@ -78,10 +78,12 @@ class AiohttpClient:
         headers: Mapping[str, str] | None = None,
     ) -> Any:
         """Issue a throttled ``GET`` request and return the JSON-decoded body."""
-        async with self._throttler:
-            async with self.mass.http_session.get(url, params=params, headers=headers) as resp:
-                resp.raise_for_status()
-                return await resp.json(loads=json_loads)
+        async with (
+            self._throttler,
+            self.mass.http_session.get(url, params=params, headers=headers) as resp,
+        ):
+            resp.raise_for_status()
+            return await resp.json(loads=json_loads)
 
     async def post_json(
         self,
@@ -91,10 +93,12 @@ class AiohttpClient:
         headers: Mapping[str, str] | None = None,
     ) -> Any:
         """Issue a throttled ``POST`` request with a JSON body and return the decoded response."""
-        async with self._throttler:
-            async with self.mass.http_session.post(url, json=json, headers=headers) as resp:
-                resp.raise_for_status()
-                return await resp.json(loads=json_loads)
+        async with (
+            self._throttler,
+            self.mass.http_session.post(url, json=json, headers=headers) as resp,
+        ):
+            resp.raise_for_status()
+            return await resp.json(loads=json_loads)
 
 
 __all__ = ["AiohttpClient", "HttpClient"]
