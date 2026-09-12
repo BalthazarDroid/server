@@ -1,4 +1,4 @@
-"""
+r"""
 Build ``music_assistant/controllers/genome/baseline/baseline_v1.json`` (§3.7).
 
 Standalone and runnable offline: this script imports nothing from ``music_assistant`` so it
@@ -41,7 +41,9 @@ from typing import Any
 # ruff: noqa: T201
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-GENRE_MAPPING_PATH = REPO_ROOT / "music_assistant" / "helpers" / "resources" / "genres" / "genre_mapping.json"
+GENRE_MAPPING_PATH = (
+    REPO_ROOT / "music_assistant" / "helpers" / "resources" / "genres" / "genre_mapping.json"
+)
 
 LISTENBRAINZ_BASE_URL = "https://api.listenbrainz.org"
 MUSICBRAINZ_BASE_URL = "https://musicbrainz-mirror.music-assistant.io/ws/2"
@@ -93,7 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _aggregate(records: list[dict[str, Any]], genre_mapping: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate(
+    records: list[dict[str, Any]], genre_mapping: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Aggregate raw artist samples into genre/era shares, percentiles and concentration."""
     alias_map = _build_alias_map(genre_mapping)
     genre_weight: dict[str, float] = dict.fromkeys(
@@ -192,7 +196,7 @@ def _percentiles(values: list[int], percentiles: tuple[int, ...]) -> dict[str, i
 
 
 def _concentration(listen_counts: list[float]) -> float:
-    """Normalized Herfindahl index over sampled artists' listen-count shares (0..1)."""
+    """Compute the normalized Herfindahl index over sampled artists' listen-count shares (0..1)."""
     total = sum(listen_counts)
     if total <= 0 or not listen_counts:
         return 0.0
@@ -233,7 +237,9 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     async with aiohttp.ClientSession() as session:
         top_artists = await _get_json(
-            session, f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists", params={"count": str(sample)}
+            session,
+            f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
+            params={"count": str(sample)},
         )
         await asyncio.sleep(LIVE_REQUEST_DELAY_SECONDS)
         artists = top_artists.get("payload", {}).get("artists", [])
@@ -242,7 +248,9 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
         for batch_start in range(0, len(mbids), 50):
             batch = mbids[batch_start : batch_start + 50]
             popularity = await _post_json(
-                session, f"{LISTENBRAINZ_BASE_URL}/1/popularity/artist", json={"artist_mbids": batch}
+                session,
+                f"{LISTENBRAINZ_BASE_URL}/1/popularity/artist",
+                json={"artist_mbids": batch},
             )
             for item in popularity.get("payload", []):
                 popularity_by_mbid[item["artist_mbid"]] = item
@@ -254,7 +262,9 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
                 continue
             popularity = popularity_by_mbid.get(mbid, {})
             lookup = await _get_json(
-                session, f"{MUSICBRAINZ_BASE_URL}/artist/{mbid}", params={"inc": "tags+genres", "fmt": "json"}
+                session,
+                f"{MUSICBRAINZ_BASE_URL}/artist/{mbid}",
+                params={"inc": "tags+genres", "fmt": "json"},
             )
             await asyncio.sleep(LIVE_REQUEST_DELAY_SECONDS)
             life_span = lookup.get("life-span") or {}
@@ -293,13 +303,26 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--out",
-        default=str(REPO_ROOT / "music_assistant" / "controllers" / "genome" / "baseline" / "baseline_v1.json"),
+        default=str(
+            REPO_ROOT
+            / "music_assistant"
+            / "controllers"
+            / "genome"
+            / "baseline"
+            / "baseline_v1.json"
+        ),
         help="Output path for the baseline JSON file.",
     )
-    parser.add_argument("--sample", type=int, default=50000, help="Live mode: number of top artists to sample.")
-    parser.add_argument("--fixture", default=None, help="Offline mode: path to a local artist-sample JSON file.")
     parser.add_argument(
-        "--from-dump", default=None, help="Offline mode: path to a raw ListenBrainz dump shaped the same way."
+        "--sample", type=int, default=50000, help="Live mode: number of top artists to sample."
+    )
+    parser.add_argument(
+        "--fixture", default=None, help="Offline mode: path to a local artist-sample JSON file."
+    )
+    parser.add_argument(
+        "--from-dump",
+        default=None,
+        help="Offline mode: path to a raw ListenBrainz dump shaped the same way.",
     )
     parser.add_argument("--version", default="v1-2026-09", help="Baseline version string to embed.")
     return parser.parse_args(argv)
