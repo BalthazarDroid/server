@@ -1,0 +1,32 @@
+{
+  "id": "f6f2326f-6b25-4170-b89d-e235b25508e8",
+  "name": "Sigur Rós",
+  "sort-name": "Sigur Rós",
+  "country": "IS",
+  "life-span": {
+    "begin": "1994",
+    "end": null,
+    "ended": false
+  },
+  "tags": [
+    {
+      "count": 8,
+      "name": "post-rock"
+    },
+    {
+      "count": 5,
+      "name": "ambient"
+    },
+    {
+      "count": 2,
+      "name": "shoegaze"
+    }
+  ],
+  "genres": [
+    {
+      "count": 8,
+      "name": "post-rock",
+      "id": "genre-id"
+    }
+  ]
+}

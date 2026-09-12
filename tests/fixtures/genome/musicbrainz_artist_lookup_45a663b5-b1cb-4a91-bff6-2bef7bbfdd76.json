@@ -1,0 +1,28 @@
+{
+  "id": "45a663b5-b1cb-4a91-bff6-2bef7bbfdd76",
+  "name": "Boards of Canada",
+  "sort-name": "Boards of Canada",
+  "country": "GB",
+  "life-span": {
+    "begin": "1986",
+    "end": null,
+    "ended": false
+  },
+  "tags": [
+    {
+      "count": 9,
+      "name": "idm"
+    },
+    {
+      "count": 3,
+      "name": "ambient"
+    }
+  ],
+  "genres": [
+    {
+      "count": 9,
+      "name": "idm",
+      "id": "genre-id"
+    }
+  ]
+}

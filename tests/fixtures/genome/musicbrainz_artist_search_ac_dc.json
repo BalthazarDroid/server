@@ -1,0 +1,29 @@
+{
+  "created": "2026-09-12T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "66c662b6-6e2f-4930-8610-912e24c63ed1",
+      "type": "Group",
+      "score": 100,
+      "name": "AC/DC",
+      "sort-name": "AC/DC",
+      "country": "AU",
+      "life-span": {
+        "begin": "1973",
+        "ended": null
+      },
+      "tags": [
+        {
+          "count": 9,
+          "name": "hard rock"
+        },
+        {
+          "count": 3,
+          "name": "blues rock"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "c3ae7ee4-8b02-4c33-8ae9-3d15fcb9d4d0",
+  "name": "Kasabian",
+  "sort-name": "Kasabian",
+  "country": "GB",
+  "life-span": {
+    "begin": "1997",
+    "end": null,
+    "ended": false
+  },
+  "tags": [
+    {
+      "count": 5,
+      "name": "zzz-unmapped-tag"
+    },
+    {
+      "count": 2,
+      "name": "another-unmapped"
+    }
+  ],
+  "genres": [
+    {
+      "count": 5,
+      "name": "zzz-unmapped-tag",
+      "id": "genre-id"
+    }
+  ]
+}

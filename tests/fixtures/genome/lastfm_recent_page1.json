@@ -1,0 +1,207 @@
+{
+  "recenttracks": {
+    "@attr": {"user": "testuser", "totalPages": "2", "page": "1", "perPage": "200", "total": "23"},
+    "track": [
+      {
+        "artist": {"mbid": "", "#text": "Sigur Rós"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Ágætis byrjun"},
+        "name": "Svefn-g-englar",
+        "url": "https://www.last.fm/music/Sigur+Ros/_/Svefn-g-englar",
+        "@attr": {"nowplaying": "true"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Sigur Rós"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Ágætis byrjun"},
+        "name": "Svefn-g-englar",
+        "url": "https://www.last.fm/music/Sigur+Ros/_/Svefn-g-englar",
+        "date": {"uts": "1705000000", "#text": "11 Jan 2024, 20:26"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "AC/DC"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Back in Black"},
+        "name": "Back In Black",
+        "url": "https://www.last.fm/music/AC~2FDC/_/Back+In+Black",
+        "date": {"uts": "1704990000", "#text": "11 Jan 2024, 17:40"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Radiohead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Kid A"},
+        "name": "Everything In Its Right Place",
+        "url": "https://www.last.fm/music/Radiohead/_/Everything+In+Its+Right+Place",
+        "date": {"uts": "1704980000", "#text": "11 Jan 2024, 14:53"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Boards of Canada"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Music Has the Right to Children"},
+        "name": "Roygbiv",
+        "url": "https://www.last.fm/music/Boards+of+Canada/_/Roygbiv",
+        "date": {"uts": "1704970000", "#text": "11 Jan 2024, 12:06"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Portishead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Dummy"},
+        "name": "Glory Box",
+        "url": "https://www.last.fm/music/Portishead/_/Glory+Box",
+        "date": {"uts": "1704960000", "#text": "11 Jan 2024, 09:20"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Nick Drake"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Pink Moon"},
+        "name": "Pink Moon",
+        "url": "https://www.last.fm/music/Nick+Drake/_/Pink+Moon",
+        "date": {"uts": "1704950000", "#text": "11 Jan 2024, 06:33"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Sigur Rós"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Takk..."},
+        "name": "Hoppípolla",
+        "url": "https://www.last.fm/music/Sigur+Ros/_/Hopp%C3%ADpolla",
+        "date": {"uts": "1704940000", "#text": "11 Jan 2024, 03:46"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "AC/DC"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Highway to Hell"},
+        "name": "Highway to Hell",
+        "url": "https://www.last.fm/music/AC~2FDC/_/Highway+to+Hell",
+        "date": {"uts": "1704930000", "#text": "11 Jan 2024, 01:00"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Radiohead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Kid A"},
+        "name": "Idioteque",
+        "url": "https://www.last.fm/music/Radiohead/_/Idioteque",
+        "date": {"uts": "1704920000", "#text": "10 Jan 2024, 22:13"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Boards of Canada"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "The Campfire Headphase"},
+        "name": "Dayvan Cowboy",
+        "url": "https://www.last.fm/music/Boards+of+Canada/_/Dayvan+Cowboy",
+        "date": {"uts": "1704910000", "#text": "10 Jan 2024, 19:26"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Portishead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Dummy"},
+        "name": "Roads",
+        "url": "https://www.last.fm/music/Portishead/_/Roads",
+        "date": {"uts": "1704900000", "#text": "10 Jan 2024, 16:40"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Nick Drake"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Five Leaves Left"},
+        "name": "River Man",
+        "url": "https://www.last.fm/music/Nick+Drake/_/River+Man",
+        "date": {"uts": "1704890000", "#text": "10 Jan 2024, 13:53"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "AC/DC"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Back in Black"},
+        "name": "Back In Black",
+        "url": "https://www.last.fm/music/AC~2FDC/_/Back+In+Black",
+        "date": {"uts": "1704880000", "#text": "10 Jan 2024, 11:06"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Radiohead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "In Rainbows"},
+        "name": "Weird Fishes",
+        "url": "https://www.last.fm/music/Radiohead/_/Weird+Fishes",
+        "date": {"uts": "1704870000", "#text": "10 Jan 2024, 08:20"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Portishead"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Third"},
+        "name": "Machine Gun",
+        "url": "https://www.last.fm/music/Portishead/_/Machine+Gun",
+        "date": {"uts": "1704860000", "#text": "10 Jan 2024, 05:33"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Nick Drake"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Time of No Reply"},
+        "name": "Alberta",
+        "url": "https://www.last.fm/music/Nick+Drake/_/Alberta",
+        "date": {"uts": "1704850000", "#text": "10 Jan 2024, 02:46"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Sigur Rós"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Takk..."},
+        "name": "Sæglópur",
+        "url": "https://www.last.fm/music/Sigur+Ros/_/S%C3%A6gl%C3%B3pur",
+        "date": {"uts": "1704840000", "#text": "10 Jan 2024, 00:00"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "AC/DC"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Highway to Hell"},
+        "name": "Touch Too Much",
+        "url": "https://www.last.fm/music/AC~2FDC/_/Touch+Too+Much",
+        "date": {"uts": "1704830000", "#text": "9 Jan 2024, 21:13"}
+      },
+      {
+        "artist": {"mbid": "", "#text": "Boards of Canada"},
+        "streamable": "0",
+        "image": [{"size": "small", "#text": "https://example.invalid/s.png"}],
+        "mbid": "",
+        "album": {"mbid": "", "#text": "Geogaddi"},
+        "name": "1969",
+        "url": "https://www.last.fm/music/Boards+of+Canada/_/1969",
+        "date": {"uts": "1704820000", "#text": "9 Jan 2024, 18:26"}
+      }
+    ]
+  }
+}

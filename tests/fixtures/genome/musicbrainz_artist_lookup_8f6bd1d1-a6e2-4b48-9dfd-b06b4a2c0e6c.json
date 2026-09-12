@@ -1,0 +1,28 @@
+{
+  "id": "8f6bd1d1-a6e2-4b48-9dfd-b06b4a2c0e6c",
+  "name": "Portishead",
+  "sort-name": "Portishead",
+  "country": "GB",
+  "life-span": {
+    "begin": "1991",
+    "end": null,
+    "ended": false
+  },
+  "tags": [
+    {
+      "count": 9,
+      "name": "trip hop"
+    },
+    {
+      "count": 4,
+      "name": "downtempo"
+    }
+  ],
+  "genres": [
+    {
+      "count": 9,
+      "name": "trip hop",
+      "id": "genre-id"
+    }
+  ]
+}

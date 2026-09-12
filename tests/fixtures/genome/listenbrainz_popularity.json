@@ -1,0 +1,14 @@
+{
+  "payload": [
+    {
+      "artist_mbid": "f6f2326f-6b25-4170-b89d-e235b25508e8",
+      "total_listen_count": 4821334,
+      "total_user_count": 118422
+    },
+    {
+      "artist_mbid": "c3ae7ee4-8b02-4c33-8ae9-3d15fcb9d4d0",
+      "total_listen_count": 912,
+      "total_user_count": 61
+    }
+  ]
+}

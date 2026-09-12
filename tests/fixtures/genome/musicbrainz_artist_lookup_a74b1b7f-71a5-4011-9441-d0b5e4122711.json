@@ -1,0 +1,28 @@
+{
+  "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+  "name": "Radiohead",
+  "sort-name": "Radiohead",
+  "country": "GB",
+  "life-span": {
+    "begin": "1985",
+    "end": null,
+    "ended": false
+  },
+  "tags": [
+    {
+      "count": 8,
+      "name": "electronic"
+    },
+    {
+      "count": 6,
+      "name": "alternative rock"
+    }
+  ],
+  "genres": [
+    {
+      "count": 8,
+      "name": "electronic",
+      "id": "genre-id"
+    }
+  ]
+}

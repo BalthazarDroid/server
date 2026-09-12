@@ -1,0 +1,29 @@
+{
+  "created": "2026-09-12T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "45a663b5-b1cb-4a91-bff6-2bef7bbfdd76",
+      "type": "Group",
+      "score": 100,
+      "name": "Boards of Canada",
+      "sort-name": "Boards of Canada",
+      "country": "GB",
+      "life-span": {
+        "begin": "1986",
+        "ended": null
+      },
+      "tags": [
+        {
+          "count": 9,
+          "name": "idm"
+        },
+        {
+          "count": 3,
+          "name": "ambient"
+        }
+      ]
+    }
+  ]
+}
