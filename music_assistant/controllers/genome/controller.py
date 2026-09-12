@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from music_assistant_models.auth import Scope
@@ -73,7 +75,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Callable, Sequence
 
     from music_assistant_models.config_entries import ConfigValueType, CoreConfig
 
@@ -105,6 +107,11 @@ class _GenomeStoreProtocol(Protocol):
     async def clear(self, listener: str | None = None) -> None: ...
     async def source_counts(self, listener: str) -> dict[str, int]: ...
     async def player_names(self) -> dict[str, str]: ...
+    # extensions beyond the frozen Part 4 surface, added during integration (see docs/STATUS.md):
+    async def upsert_artist_meta_full(self, rows: Sequence[Any], *, state: str) -> None: ...
+    async def update_lb_popularity(self, rows: dict[str, tuple[int, int]]) -> None: ...
+    async def backfill_done(self) -> bool: ...
+    async def mark_backfill_done(self) -> None: ...
 
 
 class _UploadState:
@@ -150,6 +157,15 @@ def _default_lastfm_importer_factory(mass: MusicAssistant, *, username: str, api
     return LastfmImporter(client, username, api_key)
 
 
+def _default_playlog_importer_factory(mass: MusicAssistant, store: _GenomeStoreProtocol) -> Any:
+    """Lazily construct the real MA playlog importer (live capture + one-time backfill)."""
+    from music_assistant.controllers.genome.importers.ma_playlog import (  # noqa: PLC0415
+        MaPlaylogImporter,
+    )
+
+    return MaPlaylogImporter(mass, store)
+
+
 class GenomeController(CoreController):
     """Core controller exposing the Listening Genome API (§3.2, §3.3)."""
 
@@ -169,12 +185,16 @@ class GenomeController(CoreController):
             "Music Assistant's core controller computing a household listening fingerprint."
         )
         self.manifest.icon = "dna"
-        self.store: _GenomeStoreProtocol = store if store is not None else _create_default_store(mass)
+        self.store: _GenomeStoreProtocol = (
+            store if store is not None else _create_default_store(mass)
+        )
         self.baseline: Baseline = uniform_baseline()
         self.last_rebuild_at: int | None = None
         self._uploads: dict[str, _UploadState] = {}
         self._apple_parser = _default_apple_parser
         self._lastfm_importer_factory = _default_lastfm_importer_factory
+        self._playlog_importer_factory = _default_playlog_importer_factory
+        self._unsubscribe_playlog: Callable[[], None] | None = None
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """Return all Config Entries for the genome core module (§3.2)."""
@@ -255,13 +275,28 @@ class GenomeController(CoreController):
         return await super().handle_config_action(action)
 
     async def setup(self, config: CoreConfig) -> None:
-        """Load the baseline, set up storage and register the scheduled rebuild (§1.10)."""
+        """
+        Load the baseline, set up storage, attach live playlog capture and schedule rebuilds.
+
+        Live capture of ``EventType.PLAYLOG_UPDATED`` (§1.4) is the feature's primary ingestion
+        path — MA's own ``playlog`` table purges rows older than 90 days, so subscribing here
+        (rather than only backfilling once) is what makes a real listening history possible at
+        all. A one-time backfill of the existing ``playlog``/``tracks`` tables runs afterwards,
+        in the background, to seed a coarse prior for everything before Genome started listening.
+        """
         self.baseline = await load_baseline()
         await self.store.setup()
+        playlog_importer = self._playlog_importer_factory(self.mass, self.store)
+        self._unsubscribe_playlog = playlog_importer.attach()
+        if not await self.store.backfill_done():
+            self.mass.create_task(self._run_ma_backfill(playlog_importer))
         self._register_rebuild_task()
 
     async def close(self) -> None:
-        """Close storage on server stop."""
+        """Unsubscribe live playlog capture and close storage on server stop."""
+        if self._unsubscribe_playlog is not None:
+            self._unsubscribe_playlog()
+            self._unsubscribe_playlog = None
         await self.store.close()
 
     async def update_config(self, config: CoreConfig, changed_keys: set[str]) -> None:
@@ -362,27 +397,26 @@ class GenomeController(CoreController):
         username = username or self.get_config_value(
             CONF_LASTFM_USERNAME, DEFAULT_LASTFM_USERNAME, return_type=str
         )
-        api_key = self.get_config_value(CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str)
+        api_key = self.get_config_value(
+            CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
+        )
         if not username or not api_key:
             msg = "Last.fm is not configured (username and API key are required)"
             raise InvalidDataError(msg)
         importer = self._lastfm_importer_factory(self.mass, username=username, api_key=api_key)
-
-        listens: list[Listen] = []
-        page = 1
-        while True:
-            lf_page = await importer.fetch_recent(page)
-            listens.extend(getattr(lf_page, "listens", []))
-            total_pages = getattr(lf_page, "total_pages", page)
-            if (max_pages and page >= max_pages) or page >= total_pages:
-                break
-            page += 1
-        return await self.store.add_listens(listens, listener=LISTENER_HOUSEHOLD)
+        return cast(
+            "GenomeImportResult",
+            await importer.import_since(
+                self.store, listener=LISTENER_HOUSEHOLD, max_pages=max_pages
+            ),
+        )
 
     @api_command("genome/settings", required_scope=Scope.LIBRARY_READ)
     async def get_settings(self) -> GenomeSettings:
         """Return the current genome settings (§3.3). Never includes the Last.fm API key."""
-        api_key = self.get_config_value(CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str)
+        api_key = self.get_config_value(
+            CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
+        )
         return GenomeSettings(
             half_life_days=self.get_config_value(
                 CONF_RECENCY_HALF_LIFE_DAYS, DEFAULT_HALF_LIFE_DAYS, return_type=int
@@ -427,9 +461,10 @@ class GenomeController(CoreController):
             "min_seconds_played": CONF_MIN_SECONDS_PLAYED,
             "apple_import_dir": CONF_APPLE_IMPORT_DIR,
         }
-        values: dict[str, ConfigValueType] = {
-            key_map[field]: value for field, value in settings.items() if field in key_map
-        }
+        values: dict[str, ConfigValueType] = {}
+        for field, value in settings.items():
+            if field in key_map:
+                values[key_map[field]] = cast("ConfigValueType", value)
         if values:
             await self.mass.config.save_core_config(self.domain, values)
         return await self.get_settings()
@@ -461,12 +496,35 @@ class GenomeController(CoreController):
         """Scheduled-task entry point: rebuild the household genome."""
         await self.rebuild(LISTENER_HOUSEHOLD)
 
+    async def _run_ma_backfill(self, playlog_importer: Any) -> None:
+        """
+        Run the one-time MA playlog/tracks backfill in the background, then mark it done.
+
+        Best-effort: a failure here must never crash server startup, and is not retried until
+        the next restart (the backfill is a coarse prior only; live capture keeps working
+        regardless).
+
+        :param playlog_importer: The ``MaPlaylogImporter`` returned by the playlog importer
+            factory that :meth:`setup` already attached.
+        """
+        min_seconds = self.get_config_value(
+            CONF_MIN_SECONDS_PLAYED, DEFAULT_MIN_SECONDS_PLAYED, return_type=int
+        )
+        try:
+            await playlog_importer.backfill(min_seconds_played=min_seconds)
+        except Exception:
+            LOGGER.warning("MA playlog backfill failed", exc_info=True)
+        finally:
+            await self.store.mark_backfill_done()
+
     async def _rebuild(self, listener: str, *, enrich: bool = True) -> GenomeRebuildResult:
         """Do the actual rebuild work shared by :meth:`rebuild` and :meth:`get_genome`."""
         start = time.monotonic()
         listens = [listen async for listen in self.store.iter_listens(listener)]
         artists_enriched = 0
-        if enrich and self.get_config_value(CONF_ENRICH_ENABLED, DEFAULT_ENRICH_ENABLED, return_type=bool):
+        if enrich and self.get_config_value(
+            CONF_ENRICH_ENABLED, DEFAULT_ENRICH_ENABLED, return_type=bool
+        ):
             artists_enriched = await self._enrich_pending()
         artist_keys = sorted({listen.artist_key for listen in listens})
         artist_meta = await self.store.get_artist_meta(artist_keys)
@@ -507,17 +565,21 @@ class GenomeController(CoreController):
 
     async def _enrich_pending(self) -> int:
         """
-        Resolve pending artist metadata via MusicBrainz/ListenBrainz, best-effort (§3.8).
+        Resolve pending artist metadata via MusicBrainz, then ListenBrainz popularity (§3.8).
 
         Enrichment must never fail a rebuild: any problem (including the enrichment modules
-        not being available yet in this checkout) is logged and treated as "0 enriched".
+        not being available yet in this checkout) is logged and treated as "0 enriched". The two
+        lookups are separate passes because :func:`enrich_pending_artists` already knows how to
+        write ``mbid``/``genres``/``mb_tags`` safely; popularity is merged afterwards through
+        :meth:`_GenomeStoreProtocol.update_lb_popularity`, which only ever updates the two
+        ``lb_*`` columns so it can never clobber the genre data the first pass just wrote.
         """
         try:
             from music_assistant.controllers.genome.enrich.listenbrainz import (  # noqa: PLC0415
                 artist_popularity,
             )
             from music_assistant.controllers.genome.enrich.musicbrainz import (  # noqa: PLC0415
-                resolve_artist,
+                enrich_pending_artists,
             )
             from music_assistant.controllers.genome.http import AiohttpClient  # noqa: PLC0415
         except ImportError:
@@ -527,24 +589,29 @@ class GenomeController(CoreController):
         pending = await self.store.pending_artist_keys()
         if not pending:
             return 0
-        client = AiohttpClient(self.mass, rate_limit=10, period=10)
-        resolved: list[ArtistMeta] = []
-        for _artist_key, artist_name in pending:
-            try:
-                update = await resolve_artist(artist_name, client=client)
-            except Exception:
-                LOGGER.debug("MusicBrainz resolution failed for %s", artist_name, exc_info=True)
-                continue
-            if update is not None:
-                resolved.append(update)
+        pending_keys = [artist_key for artist_key, _artist_name in pending]
+        mb_client = AiohttpClient(self.mass, rate_limit=10, period=10)
+        resolved = await enrich_pending_artists(self.store, client=mb_client, mass=self.mass)
         if resolved:
-            mbids = [meta.mbid for meta in resolved if meta.mbid]
-            try:
-                await artist_popularity(mbids, client=client)
-            except Exception:
-                LOGGER.debug("ListenBrainz popularity lookup failed", exc_info=True)
-            await self.store.upsert_artist_meta(resolved, state="ok")
-        return len(resolved)
+            meta = await self.store.get_artist_meta(pending_keys)
+            mbid_by_key = {key: m.mbid for key, m in meta.items() if m.mbid}
+            if mbid_by_key:
+                lb_client = AiohttpClient(self.mass, rate_limit=1, period=1.0)
+                try:
+                    popularity = await artist_popularity(
+                        list(mbid_by_key.values()), client=lb_client
+                    )
+                except Exception:
+                    LOGGER.debug("ListenBrainz popularity lookup failed", exc_info=True)
+                else:
+                    updates = {
+                        artist_key: (pop.listeners, pop.listen_count)
+                        for artist_key, mbid in mbid_by_key.items()
+                        if (pop := popularity.get(mbid)) is not None
+                    }
+                    if updates:
+                        await self.store.update_lb_popularity(updates)
+        return resolved
 
     async def _ingest_apple_csv(self, path: str) -> GenomeImportResult:
         """Parse an Apple Music export CSV and store the resulting listens."""
@@ -594,7 +661,7 @@ class GenomeController(CoreController):
         """Append ``raw`` bytes to ``path`` off the event loop, creating the directory first."""
 
         def _write() -> None:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
             with open(path, "ab") as handle:
                 handle.write(raw)
 
@@ -612,10 +679,8 @@ class GenomeController(CoreController):
         path = self._upload_path(upload_id)
 
         def _remove() -> None:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 os.remove(path)  # noqa: PTH107 - genuinely off-thread
-            except FileNotFoundError:
-                pass
 
         await asyncio.to_thread(_remove)
 

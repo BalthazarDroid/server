@@ -24,8 +24,8 @@ from music_assistant.controllers.genome.models import GenomeImportResult, Listen
 from music_assistant.helpers.util import parse_title_and_version
 
 if TYPE_CHECKING:
+    from music_assistant.controllers.genome.controller import _GenomeStoreProtocol
     from music_assistant.controllers.genome.http import HttpClient
-    from music_assistant.controllers.genome.store import GenomeStore
 
 
 @dataclass(slots=True, frozen=True)
@@ -79,7 +79,7 @@ class LastfmImporter:
         return self._parse_page(data)
 
     async def import_since(
-        self, store: GenomeStore, *, listener: str, max_pages: int = 0
+        self, store: _GenomeStoreProtocol, *, listener: str, max_pages: int = 0
     ) -> GenomeImportResult:
         """
         Import every scrobble newer than the most recently stored Last.fm listen.
@@ -87,7 +87,8 @@ class LastfmImporter:
         Pages from the most recent scrobble backwards (Last.fm's default order) and stops once a
         page contains nothing newer than the resume point, or ``max_pages`` is reached.
 
-        :param store: The :class:`GenomeStore` to read the resume point from and write into.
+        :param store: The ``GenomeStore``-shaped object to read the resume point from and write
+            into.
         :param listener: The listener partition to attribute these listens to.
         :param max_pages: Stop after this many pages; ``0`` means no limit.
         """
@@ -118,14 +119,16 @@ class LastfmImporter:
                 result["rows_imported"] += batch_result["rows_imported"]
                 result["rows_duplicate"] += batch_result["rows_duplicate"]
                 for key in ("first_played_at", "last_played_at"):
-                    value = batch_result[key]  # type: ignore[literal-required]
+                    value = batch_result[key]
                     if value is None:
                         continue
-                    current = result[key]  # type: ignore[literal-required]
-                    if current is None or (
-                        key == "first_played_at" and value < current
-                    ) or (key == "last_played_at" and value > current):
-                        result[key] = value  # type: ignore[literal-required]
+                    current = result[key]
+                    if (
+                        current is None
+                        or (key == "first_played_at" and value < current)
+                        or (key == "last_played_at" and value > current)
+                    ):
+                        result[key] = value
             page_number += 1
             if max_pages and page_number > max_pages:
                 break
@@ -133,7 +136,7 @@ class LastfmImporter:
                 await asyncio.sleep(LASTFM_INTER_PAGE_DELAY_SECONDS)
         return result
 
-    async def _resume_timestamp(self, store: GenomeStore, listener: str) -> int:
+    async def _resume_timestamp(self, store: _GenomeStoreProtocol, listener: str) -> int:
         """Return the newest stored Last.fm ``played_at`` for ``listener``, or ``0``."""
         latest = 0
         async for listen in store.iter_listens(listener):
@@ -158,7 +161,7 @@ class LastfmImporter:
                 continue
             try:
                 played_at = int(date["uts"])
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             artist_name = track.get("artist", {}).get("#text", "")
             track_name = track.get("name", "")

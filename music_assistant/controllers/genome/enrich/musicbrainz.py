@@ -31,8 +31,8 @@ from music_assistant.controllers.genome.constants import (
 )
 
 if TYPE_CHECKING:
+    from music_assistant.controllers.genome.controller import _GenomeStoreProtocol
     from music_assistant.controllers.genome.http import HttpClient
-    from music_assistant.controllers.genome.store import GenomeStore
     from music_assistant.mass import MusicAssistant
 
 # MA's own MusicBrainz mirror (see providers/musicbrainz/api_client.py::MB_BASE_URL, which this
@@ -106,17 +106,20 @@ async def resolve_artist(
 
 
 async def enrich_pending_artists(
-    store: GenomeStore,
+    store: _GenomeStoreProtocol,
     *,
     client: HttpClient,
     mass: MusicAssistant | None = None,
     limit: int = 200,
 ) -> int:
     """
-    Resolve and store MusicBrainz metadata for every artist :meth:`GenomeStore.pending_artist_keys`
-    returns, one at a time, never letting a single failure abort the batch.
+    Resolve and store MusicBrainz metadata for pending artists, one at a time.
 
-    :param store: The :class:`GenomeStore` to read pending artists from and write results into.
+    Every artist :meth:`GenomeStore.pending_artist_keys` returns is resolved independently,
+    never letting a single failure abort the batch.
+
+    :param store: The ``GenomeStore``-shaped object to read pending artists from and write
+        results into.
     :param client: The :class:`HttpClient` fallback for artists without a loaded provider.
     :param mass: The running :class:`MusicAssistant` instance, used to prefer the loaded provider.
     :param limit: The maximum number of artists to resolve in this pass.
@@ -163,9 +166,7 @@ async def _search_artist(
     """Search by artist name and return the best matching MBID, or ``None``."""
     escaped = re.sub(_LUCENE_SPECIAL, r"\\\1", name)
     query = f'artist:"{escaped}"'
-    data = await _get(
-        "artist", {"query": query, "limit": "5"}, client=client, mass=mass
-    )
+    data = await _get("artist", {"query": query, "limit": "5"}, client=client, mass=mass)
     candidates = data.get("artists", []) if isinstance(data, dict) else []
     safe_name = create_safe_string(name)
     for candidate in candidates:
@@ -181,9 +182,7 @@ async def _lookup_artist(
 ) -> ArtistMetaUpdate:
     """Fetch full artist details for a known MBID and build an :class:`ArtistMetaUpdate`."""
     data = await _get(f"artist/{mbid}", {"inc": "tags+genres"}, client=client, mass=mass)
-    tags = sorted(
-        (data.get("tags") or []), key=lambda tag: tag.get("count", 0), reverse=True
-    )
+    tags = sorted((data.get("tags") or []), key=lambda tag: tag.get("count", 0), reverse=True)
     mb_tags = tuple((tag["name"], int(tag.get("count", 0))) for tag in tags if tag.get("name"))
     genres = _map_tags_to_genres(name for name, _count in mb_tags)
     life_span = data.get("life-span") or {}

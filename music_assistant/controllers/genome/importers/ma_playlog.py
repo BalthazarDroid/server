@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
     from music_assistant_models.event import MassEvent
 
-    from music_assistant.controllers.genome.store import GenomeStore
+    from music_assistant.controllers.genome.controller import _GenomeStoreProtocol
     from music_assistant.mass import MusicAssistant
 
 # never synthesize more than this many backfilled plays per track, however high play_count is
@@ -49,12 +49,12 @@ _MIN_SYNTHETIC_INTERVAL_SECONDS = 86400  # never space synthetic plays closer th
 class MaPlaylogImporter:
     """Captures live MA plays and backfills a coarse prior from the existing playlog/tracks."""
 
-    def __init__(self, mass: MusicAssistant, store: GenomeStore) -> None:
+    def __init__(self, mass: MusicAssistant, store: _GenomeStoreProtocol) -> None:
         """
         Initialize the importer.
 
         :param mass: The running :class:`MusicAssistant` instance.
-        :param store: The :class:`GenomeStore` to write captured listens into.
+        :param store: The ``GenomeStore``-shaped object to write captured listens into.
         """
         self.mass = mass
         self.store = store
@@ -106,7 +106,11 @@ class MaPlaylogImporter:
                 continue
             track_row = await database.get_row(DB_TABLE_TRACKS, {"item_id": row["item_id"]})
             play_count = int(track_row["play_count"]) if track_row else 1
-            last_played = int(track_row["last_played"]) if track_row and track_row["last_played"] else int(row["timestamp"])
+            last_played = (
+                int(track_row["last_played"])
+                if track_row and track_row["last_played"]
+                else int(row["timestamp"])
+            )
             artist_name = _primary_artist_name(row["artists"])
             if not artist_name:
                 result["rows_skipped"] += 1

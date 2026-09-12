@@ -1,4 +1,5 @@
-"""Shared fixtures for Listening Genome tests.
+"""
+Shared fixtures for Listening Genome tests.
 
 Combines WP-A's fixture-backed :class:`HttpClient` with WP-B's in-memory stub of the
 frozen ``GenomeStore`` interface.
@@ -95,7 +96,7 @@ class FixtureHttpClient:
 
 @pytest.fixture
 def fixture_http_client() -> FixtureHttpClient:
-    """A fresh :class:`FixtureHttpClient` for a single test."""
+    """Build a fresh :class:`FixtureHttpClient` for a single test."""
     return FixtureHttpClient()
 
 
@@ -187,16 +188,26 @@ class StubGenomeStore:
         """No known player names in the stub by default."""
         return {}
 
+    async def update_lb_popularity(self, rows: dict[str, tuple[int, int]]) -> None:
+        """No-op: the stub does not model ListenBrainz enrichment."""
+
+    async def backfill_done(self) -> bool:
+        """Report the one-time MA backfill as already done, so unit tests never trigger it."""
+        return True
+
+    async def mark_backfill_done(self) -> None:
+        """No-op: nothing to persist in the stub."""
+
 
 @pytest.fixture
 def genome_store() -> StubGenomeStore:
-    """A fresh in-memory ``GenomeStore`` stub."""
+    """Build a fresh in-memory ``GenomeStore`` stub."""
     return StubGenomeStore()
 
 
 @pytest.fixture
 def mass_stub() -> MagicMock:
-    """A minimal ``MusicAssistant`` double with just what ``GenomeController`` touches."""
+    """Build a minimal ``MusicAssistant`` double with just what ``GenomeController`` touches."""
     mass = MagicMock()
     mass.storage_path = tempfile.mkdtemp()
     mass.tasks.register_scheduled_task = MagicMock()
@@ -206,7 +217,11 @@ def mass_stub() -> MagicMock:
 
 @pytest.fixture
 def genome_controller(mass_stub: MagicMock, genome_store: StubGenomeStore) -> GenomeController:
-    """A ``GenomeController`` wired to the in-memory store stub, with defaulted config values."""
+    """Build a ``GenomeController`` wired to the in-memory store stub, with defaulted config values."""
     controller = GenomeController(mass_stub, store=genome_store)
-    controller.get_config_value = lambda key, default=None, *, return_type=None: default  # type: ignore[method-assign]
+    # signature must match GenomeController.get_config_value exactly - callers pass return_type
+    # by keyword, so its unused params here cannot be underscore-prefixed
+    controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: default  # noqa: ARG005
+    )
     return controller

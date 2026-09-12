@@ -62,6 +62,9 @@ _CROSS_SOURCE_DEDUPE_WINDOW_SECONDS = 90
 
 _GENOME_CACHE_TTL_SECONDS = 0  # 0 = no expiry; cache is invalidated explicitly on rebuild
 
+# settings-table key recording whether the one-time MA playlog backfill has already run
+_MA_BACKFILL_DONE_KEY = "ma_backfill_done"
+
 
 class ArtistMetaWrite(TypedDict, total=False):
     """
@@ -108,7 +111,7 @@ class GenomeStore:
                 prev_version = int(row["value"])
             else:
                 prev_version = 0
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             prev_version = 0
 
         if prev_version not in (0, DB_SCHEMA_VERSION):
@@ -120,9 +123,7 @@ class GenomeStore:
             try:
                 await self.__migrate_database(prev_version)
             except Exception as err:
-                LOGGER.warning(
-                    "Genome database migration failed: %s, resetting genome data", err
-                )
+                LOGGER.warning("Genome database migration failed: %s, resetting genome data", err)
                 for table in (
                     DB_TABLE_GENOME_LISTENS,
                     DB_TABLE_GENOME_ARTIST_META,
@@ -200,7 +201,10 @@ class GenomeStore:
             if cursor.rowcount:
                 result["rows_imported"] += 1
                 seen_artists[listen.artist_key] = listen.artist_name
-                if result["first_played_at"] is None or listen.played_at < result["first_played_at"]:
+                if (
+                    result["first_played_at"] is None
+                    or listen.played_at < result["first_played_at"]
+                ):
                     result["first_played_at"] = listen.played_at
                 if result["last_played_at"] is None or listen.played_at > result["last_played_at"]:
                     result["last_played_at"] = listen.played_at
@@ -275,9 +279,7 @@ class GenomeStore:
             state=state,
         )
 
-    async def upsert_artist_meta_full(
-        self, rows: Sequence[ArtistMetaWrite], *, state: str
-    ) -> None:
+    async def upsert_artist_meta_full(self, rows: Sequence[ArtistMetaWrite], *, state: str) -> None:
         """
         Upsert the full artist metadata column set, including enrichment-only columns.
 
@@ -353,7 +355,11 @@ class GenomeStore:
         """
         assert self.database is not None
         if listener is None:
-            for table in (DB_TABLE_GENOME_LISTENS, DB_TABLE_GENOME_ARTIST_META, DB_TABLE_GENOME_CACHE):
+            for table in (
+                DB_TABLE_GENOME_LISTENS,
+                DB_TABLE_GENOME_ARTIST_META,
+                DB_TABLE_GENOME_CACHE,
+            ):
                 await self.database.execute(f"DELETE FROM {table}")
         else:
             await self.database.delete(DB_TABLE_GENOME_LISTENS, {"listener": listener})
@@ -375,8 +381,7 @@ class GenomeStore:
         """Return ``{player_id: display_name}`` for every player_id seen in stored listens."""
         assert self.database is not None
         rows = await self.database.get_rows_from_query(
-            f"SELECT DISTINCT player_id FROM {DB_TABLE_GENOME_LISTENS} "
-            "WHERE player_id IS NOT NULL",
+            f"SELECT DISTINCT player_id FROM {DB_TABLE_GENOME_LISTENS} WHERE player_id IS NOT NULL",
             limit=0,
         )
         names: dict[str, str] = {}
@@ -392,6 +397,45 @@ class GenomeStore:
                     LOGGER.debug("Could not resolve display name for player %s", player_id)
             names[player_id] = display_name
         return names
+
+    async def update_lb_popularity(self, rows: Mapping[str, tuple[int, int]]) -> None:
+        """
+        Merge ListenBrainz popularity into existing artist rows without touching other columns.
+
+        Unlike :meth:`upsert_artist_meta_full`, this only ever ``UPDATE``s ``lb_listeners``/
+        ``lb_listen_count`` on a row that already exists (from MusicBrainz resolution or a prior
+        listen) - it never inserts a new row, so it can never clobber ``genres``/``mb_tags``.
+
+        :param rows: ``artist_key -> (lb_listeners, lb_listen_count)``.
+        """
+        assert self.database is not None
+        for artist_key, (listeners, listen_count) in rows.items():
+            await self.database.execute(
+                f"UPDATE {DB_TABLE_GENOME_ARTIST_META} "
+                "SET lb_listeners = :listeners, lb_listen_count = :listen_count "
+                "WHERE artist_key = :artist_key",
+                {
+                    "listeners": listeners,
+                    "listen_count": listen_count,
+                    "artist_key": artist_key,
+                },
+            )
+        if rows:
+            await self.database.commit()
+
+    async def backfill_done(self) -> bool:
+        """Return whether the one-time MA playlog backfill has already run."""
+        assert self.database is not None
+        row = await self.database.get_row(DB_TABLE_SETTINGS, {"key": _MA_BACKFILL_DONE_KEY})
+        return row is not None and row["value"] == "1"
+
+    async def mark_backfill_done(self) -> None:
+        """Record that the one-time MA playlog backfill has run, so it is not repeated."""
+        assert self.database is not None
+        await self.database.insert_or_replace(
+            DB_TABLE_SETTINGS, {"key": _MA_BACKFILL_DONE_KEY, "value": "1", "type": "str"}
+        )
+        await self.database.commit()
 
     async def dedupe_window(self) -> int:
         """
