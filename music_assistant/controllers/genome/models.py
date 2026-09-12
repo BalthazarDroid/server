@@ -1,0 +1,289 @@
+"""
+Data model for the Listening Genome controller.
+
+This module is the single frozen contract shared by every work package (see
+``docs/ARCHITECTURE.md`` Part 4): the ``TypedDict``s mirror the ``genome/get`` JSON contract
+(§3.4) 1:1 with ``frontend/src/composables/genome/useGenome.ts``, and the ``@dataclass``
+types are the pure ``engine.py`` inputs (§3.6). Nothing in this file performs I/O.
+
+Ambiguities resolved (simplest reading chosen where §3.4/§3.6 left a detail open):
+
+- ``GenomeStats.coverage_by_source`` and ``DivergenceFacts``/``ObscurityFacts``/``EraFacts``/
+  ``LoyaltyFacts`` are plain ``TypedDict``s (not frozen dataclasses) since §3.4 defines the whole
+  JSON contract as ``TypedDict``s and these are only ever produced as JSON-serializable results.
+- ``ArtistMeta.genres`` and ``Baseline.genre_shares``/``era_shares``/``listener_percentiles`` use
+  ``tuple``/``Mapping`` exactly as written in §3.6 to keep the frozen dataclasses hashable-friendly
+  and to signal read-only intent to callers in ``engine.py``.
+- ``GenomeSettings.last_rebuild_at`` and every ``*_at``/``*_played`` timestamp are unix seconds
+  (``int``), consistent with ``played_at`` elsewhere in the schema (§3.1, §3.4).
+- ``ArtistFact.genres`` is ``list[str]`` of already-normalized ``translation_key`` strings (not
+  ``GenreShare``), since §3.4 does not ask for a full share breakdown per artist row, only the
+  genre tags for display.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import TypedDict
+
+# ============================================================================================
+# §3.6 — engine inputs (pure dataclasses, no I/O)
+# ============================================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class Listen:
+    """A single normalized listen event, as stored in ``genome_listens`` (§3.1)."""
+
+    played_at: int
+    artist_key: str
+    artist_name: str
+    track_key: str
+    track_name: str
+    album_name: str | None
+    source: str
+    player_id: str | None
+    duration_ms: int | None
+    played_ms: int | None
+    fully_played: bool | None
+    confidence: float
+
+
+@dataclass(slots=True, frozen=True)
+class ArtistMeta:
+    """Enrichment metadata for one artist, keyed by ``artist_key`` (§3.1 ``genome_artist_meta``)."""
+
+    artist_key: str
+    artist_name: str
+    mbid: str | None
+    genres: tuple[str, ...]
+    first_release_year: int | None
+    lb_listeners: int | None
+    lb_listen_count: int | None
+
+
+@dataclass(slots=True, frozen=True)
+class Baseline:
+    """The shipped average-listener baseline used for divergence and obscurity (§3.7)."""
+
+    version: str
+    genre_shares: Mapping[str, float]
+    era_shares: Mapping[int, float]
+    listener_percentiles: Mapping[int, int]
+    concentration: float
+
+
+@dataclass(slots=True, frozen=True)
+class EngineParams:
+    """Rebuild-time parameters that are not part of the stored data (§3.2, §3.5)."""
+
+    now: int
+    half_life_days: int
+    obscurity_percentile: int
+    min_seconds_played: int
+    top_n: int = 20
+    new_artist_window_days: int = 90
+
+
+@dataclass(slots=True, frozen=True)
+class GenomeInputs:
+    """Everything ``engine.build_genome`` needs to compute a :class:`GenomeResult`."""
+
+    listener: str
+    listens: Sequence[Listen]
+    artist_meta: Mapping[str, ArtistMeta]
+    baseline: Baseline
+    params: EngineParams
+    player_names: Mapping[str, str]
+
+
+# ============================================================================================
+# §3.4 — the `genome/get` JSON contract (TypedDicts, total=True unless noted)
+# ============================================================================================
+
+
+class GenreShare(TypedDict):
+    """One genre's share of household listening versus the baseline."""
+
+    key: str
+    label: str
+    share: float
+    baseline_share: float
+    ratio: float
+    contribution: float
+
+
+class ArtistFact(TypedDict):
+    """A single row in ``GenomeResult.top_artists``."""
+
+    name: str
+    artist_key: str
+    mbid: str | None
+    plays: int
+    weight: float
+    share: float
+    lb_listeners: int | None
+    obscurity: float | None
+    ratio_vs_average: float | None
+    genres: list[str]
+
+
+class TrackFact(TypedDict):
+    """A single row in ``GenomeResult.top_tracks``."""
+
+    name: str
+    artist: str
+    track_key: str
+    plays: int
+    weight: float
+    share: float
+    year: int | None
+
+
+class EraBucket(TypedDict):
+    """A single decade's share of household listening versus the baseline."""
+
+    decade: int
+    share: float
+    baseline_share: float
+
+
+class RhythmCell(TypedDict):
+    """A single weekday/hour cell of the 7x24 listening-rhythm heatmap."""
+
+    weekday: int
+    hour: int
+    weight: float
+    share: float
+
+
+class PlayerSplit(TypedDict):
+    """A single player/room's share of household listening."""
+
+    player_id: str
+    name: str
+    share: float
+
+
+class GenomeStats(TypedDict):
+    """Volume and coverage summary for a :class:`GenomeResult`."""
+
+    total_listens: int
+    weighted_listens: float
+    distinct_artists: int
+    distinct_tracks: int
+    first_listen: int | None
+    last_listen: int | None
+    coverage_by_source: dict[str, int]
+    enrichment_coverage: float
+
+
+class DivergenceFacts(TypedDict):
+    """The headline "off-mainstream" score and its top contributing genres."""
+
+    score: float
+    percent: int
+    top_over: list[GenreShare]
+    top_under: list[GenreShare]
+
+
+class ObscurityFacts(TypedDict):
+    """How much of household listening sits on below-percentile-popularity artists."""
+
+    index: float
+    percentile: int
+    threshold_listeners: int
+    known_share: float
+
+
+class EraFacts(TypedDict):
+    """The weighted distribution of listening across release decades."""
+
+    center_of_mass: float
+    spread: float
+    buckets: list[EraBucket]
+    known_share: float
+
+
+class LoyaltyFacts(TypedDict):
+    """Exploration versus repeat-listening behavior."""
+
+    exploration_ratio: float
+    concentration: float
+    top_artist_share: float
+    new_artists_90d: int
+    repeat_rate: float
+
+
+class GenomeResult(TypedDict):
+    """The full ``genome/get`` response payload."""
+
+    schema_version: int
+    engine_version: str
+    baseline_version: str
+    listener: str
+    generated_at: int
+    stale: bool
+    half_life_days: int
+    stats: GenomeStats
+    genres: list[GenreShare]
+    divergence: DivergenceFacts
+    obscurity: ObscurityFacts
+    era: EraFacts
+    loyalty: LoyaltyFacts
+    top_artists: list[ArtistFact]
+    top_tracks: list[TrackFact]
+    rhythm: list[RhythmCell]
+    players: list[PlayerSplit]
+
+
+class GenomeRebuildResult(TypedDict):
+    """Return value of ``genome/rebuild``."""
+
+    listener: str
+    listens_scanned: int
+    artists_enriched: int
+    duration_ms: int
+    genome: GenomeResult
+
+
+class GenomeImportResult(TypedDict):
+    """Return value of any import operation (Apple CSV, Last.fm, MA backfill)."""
+
+    source: str
+    rows_read: int
+    rows_imported: int
+    rows_skipped: int
+    rows_duplicate: int
+    first_played_at: int | None
+    last_played_at: int | None
+    warnings: list[str]
+
+
+class GenomeSettings(TypedDict):
+    """Return value of ``genome/settings`` — never includes the Last.fm API key itself."""
+
+    half_life_days: int
+    lastfm_username: str
+    lastfm_configured: bool
+    lastfm_poll_enabled: bool
+    enrich_enabled: bool
+    obscurity_percentile: int
+    min_seconds_played: int
+    apple_import_dir: str
+    baseline_version: str
+    last_rebuild_at: int | None
+
+
+class GenomeSettingsPatch(TypedDict, total=False):
+    """Partial update accepted by ``genome/settings/set``; every field is optional."""
+
+    half_life_days: int
+    lastfm_username: str
+    lastfm_api_key: str
+    lastfm_poll_enabled: bool
+    enrich_enabled: bool
+    obscurity_percentile: int
+    min_seconds_played: int
+    apple_import_dir: str
