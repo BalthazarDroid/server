@@ -29,6 +29,12 @@ Ambiguities resolved (§3.6 leaves these open; simplest/most defensible reading 
 - ``player_split`` shares are normalized over the weight of listens with a known ``player_id``
   only (listens with no player are excluded, mirroring how the genre vector excludes listens
   with no resolvable genre), so the returned shares sum to 1.
+- The "Listening Genome" DNA visual's four "bases" (``GenomeResult.bases``) are simply the top
+  four entries of the already-share-sorted, already-nonzero ``genres`` list — no new selection
+  rule beyond what ``build_genome`` already computes. ``GenreShare.base_mix`` (a non-base
+  genre's affinity to each base) is computed by :func:`base_mix_for_genres` from the same
+  ``listens``/``artist_meta`` the rest of the engine already has in hand; see that function's
+  docstring for the degenerate cases (single-genre artists, zero overlap, unenriched artists).
 """
 
 from __future__ import annotations
@@ -57,12 +63,13 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from .models import EngineParams, GenomeInputs, Listen
 
 __all__ = [
     "ENGINE_VERSION",
+    "base_mix_for_genres",
     "build_genome",
     "build_genre_vector",
     "divergence_facts",
@@ -74,9 +81,13 @@ __all__ = [
     "obscurity_index",
     "player_split",
     "rhythm_grid",
+    "select_bases",
     "top_artists",
     "top_tracks",
 ]
+
+# the DNA visual always has (at most) this many "bases" — the user's top genres by share.
+_BASE_COUNT = 4
 
 _ROUND_DP = 4
 # genre translation_key -> English display name, built once from the shipped 59-key taxonomy
@@ -484,6 +495,68 @@ def player_split(inputs: GenomeInputs) -> list[PlayerSplit]:
     return splits
 
 
+def select_bases(genres: list[GenreShare]) -> list[GenreShare]:
+    """
+    Return the "Listening Genome" DNA visual's four bases: the top genres by share, in order.
+
+    ``genres`` is expected already sorted by ``share`` descending with zero-share entries
+    dropped (exactly what ``build_genome`` passes in). Exactly four are returned when at least
+    four such genres exist; fewer when the user has fewer non-zero genres. Never padded with
+    fabricated entries — the frontend must handle 0-4 bases.
+
+    :param genres: The household's non-zero genre shares, sorted by ``share`` descending.
+    """
+    return genres[:_BASE_COUNT]
+
+
+def base_mix_for_genres(inputs: GenomeInputs, base_keys: Sequence[str]) -> dict[str, list[float]]:
+    """
+    Return each genre's affinity to the base genres, as fractions summing to 1.0.
+
+    For a genre ``G``, take the recency-weighted listens whose artist carries ``G``; for each
+    base ``B`` in ``base_keys``, sum the weight of those same listens whose artist *also*
+    carries ``B``; normalize the per-base sums across ``base_keys`` so they sum to 1.0.
+
+    Degenerate cases, resolved deliberately rather than silently:
+
+    - An artist resolved to only one genre contributes to no overlap for that genre (it cannot
+      simultaneously carry any base genre), so its listens count toward ``G``'s pool but never
+      toward any base's overlap sum.
+    - A genre with zero measured overlap with every base returns an empty list, never a uniform
+      split — a uniform 25/25/25/25 (or 1/n) would be a fabricated claim of "we don't know", not
+      a real affinity.
+    - Unenriched artists (no resolved ``ArtistMeta``, or a resolved row with no genres at all)
+      are excluded from the computation entirely, for every genre — never treated as "no
+      overlap" for a genre they were never counted toward in the first place.
+
+    :param inputs: The full genome computation input (already ``_filter_eligible``-d).
+    :param base_keys: The base genres' ``translation_key`` values, in display order. The
+        returned lists follow this same order. Empty input yields an empty result.
+    """
+    if not base_keys:
+        return {}
+    overlap: dict[str, dict[str, float]] = {}
+    for listen in inputs.listens:
+        meta = inputs.artist_meta.get(listen.artist_key)
+        if meta is None or not meta.genres:
+            continue
+        genre_set = set(meta.genres)
+        w = listen_weight(listen, inputs.params)
+        for genre in genre_set:
+            bucket = overlap.setdefault(genre, {})
+            for base in base_keys:
+                if base in genre_set:
+                    bucket[base] = bucket.get(base, 0.0) + w
+    result: dict[str, list[float]] = {}
+    for genre, bucket in overlap.items():
+        total = sum(bucket.get(base, 0.0) for base in base_keys)
+        if total <= 0:
+            result[genre] = []
+            continue
+        result[genre] = _round_fractions([bucket.get(base, 0.0) / total for base in base_keys])
+    return result
+
+
 def build_genome(inputs: GenomeInputs, *, tz_offset_seconds: int = 0) -> GenomeResult:
     """
     Compose the full ``genome/get`` payload from raw inputs (§3.6).
@@ -509,6 +582,16 @@ def build_genome(inputs: GenomeInputs, *, tz_offset_seconds: int = 0) -> GenomeR
         key=lambda share: share["share"],
         reverse=True,
     )
+    bases = select_bases(genres)
+    base_keys = [base["key"] for base in bases]
+    mix_by_genre = base_mix_for_genres(filtered, base_keys)
+    genres = [
+        share
+        if share["key"] in base_keys
+        else _with_base_mix(share, mix_by_genre.get(share["key"], []))
+        for share in genres
+    ]
+    bases = genres[: len(bases)]
 
     return GenomeResult(
         schema_version=GENOME_RESULT_SCHEMA_VERSION,
@@ -520,6 +603,7 @@ def build_genome(inputs: GenomeInputs, *, tz_offset_seconds: int = 0) -> GenomeR
         half_life_days=filtered.params.half_life_days,
         stats=_build_stats(filtered, total_w),
         genres=genres,
+        bases=bases,
         divergence=divergence_facts(genre_vector, baseline_vector, _GENRE_LABELS),
         obscurity=obscurity_index(filtered),
         era=era_facts(filtered),
@@ -591,6 +675,10 @@ def _genre_shares(
                 baseline_share=_r4(baseline_share),
                 ratio=_r4(ratio),
                 contribution=_r4(contribution),
+                # filled in by ``build_genome`` for the main ``genres`` list only (§ DNA visual);
+                # left empty here since this helper also builds ``divergence_facts``'s
+                # top_over/top_under rows, which have no artist-level data to compute it from.
+                base_mix=[],
             )
         )
     return shares
@@ -619,6 +707,35 @@ def _percentile_rank(listener_count: int, percentiles: Mapping[int, int]) -> flo
             fraction = (log_val - log_lo) / (log_hi - log_lo) if log_hi > log_lo else 0.0
             return pct_lo + fraction * (pct_hi - pct_lo)
     return 50.0
+
+
+def _with_base_mix(share: GenreShare, base_mix: list[float]) -> GenreShare:
+    """Return a copy of ``share`` with ``base_mix`` set, leaving every other field unchanged."""
+    return GenreShare(
+        key=share["key"],
+        label=share["label"],
+        share=share["share"],
+        baseline_share=share["baseline_share"],
+        ratio=share["ratio"],
+        contribution=share["contribution"],
+        base_mix=base_mix,
+    )
+
+
+def _round_fractions(values: list[float]) -> list[float]:
+    """
+    Round fractions that sum to ~1.0 to 4dp while keeping their sum exactly 1.0.
+
+    Rounding each entry independently (as ``_r4`` does elsewhere) can drift the sum by more
+    than a rounding error once several entries are involved; the last entry instead absorbs
+    whatever the first ``n - 1`` rounded entries leave, so ``base_mix`` always sums to exactly
+    1.0 rather than "close to" it.
+
+    :param values: Fractions that sum to 1.0 (within floating-point error). Must be non-empty.
+    """
+    rounded = [_r4(value) for value in values[:-1]]
+    rounded.append(_r4(1.0 - sum(rounded)))
+    return rounded
 
 
 def _normalize(values: dict[str, float]) -> dict[str, float]:

@@ -170,6 +170,7 @@ def test_empty_input_returns_well_formed_zeroed_genome_result() -> None:
     assert result["stats"]["total_listens"] == 0
     assert result["stats"]["weighted_listens"] == 0.0
     assert result["genres"] == []
+    assert result["bases"] == []
     assert result["divergence"]["score"] == 0.0
     assert result["divergence"]["percent"] == 0
     assert result["divergence"]["top_over"] == []
@@ -432,3 +433,207 @@ def test_build_genome_full_result_shape_is_stable() -> None:
     assert result["genres"][0]["key"] == "rock"
     assert result["top_artists"][0]["artist_key"] == "a"
     assert result["players"][0]["player_id"] == "kitchen"
+
+
+# ---------------------------------------------------------------------------------------
+# "Four bases" DNA visual: select_bases / base_mix_for_genres / ratio exposure
+# ---------------------------------------------------------------------------------------
+
+
+def test_select_bases_returns_top_four_in_order() -> None:
+    """Test select bases returns top four in order when five or more genres exist."""
+    genres = [
+        {"key": key, "share": share}  # type: ignore[typeddict-item]
+        for key, share in (
+            ("rock", 0.4),
+            ("pop", 0.3),
+            ("jazz", 0.15),
+            ("folk", 0.1),
+            ("soul", 0.05),
+        )
+    ]
+    bases = engine.select_bases(genres)  # type: ignore[arg-type]
+    assert [b["key"] for b in bases] == ["rock", "pop", "jazz", "folk"]
+
+
+def test_select_bases_returns_exactly_four_when_exactly_four_exist() -> None:
+    """Test select bases returns exactly four when exactly four genres exist."""
+    genres = [
+        {"key": key, "share": share}  # type: ignore[typeddict-item]
+        for key, share in (("rock", 0.4), ("pop", 0.3), ("jazz", 0.2), ("folk", 0.1))
+    ]
+    bases = engine.select_bases(genres)  # type: ignore[arg-type]
+    assert len(bases) == 4
+    assert [b["key"] for b in bases] == ["rock", "pop", "jazz", "folk"]
+
+
+def test_select_bases_returns_fewer_than_four_without_padding() -> None:
+    """Test select bases never pads with fabricated entries when fewer than four exist."""
+    genres = [
+        {"key": key, "share": share}  # type: ignore[typeddict-item]
+        for key, share in (("rock", 0.6), ("pop", 0.4))
+    ]
+    bases = engine.select_bases(genres)  # type: ignore[arg-type]
+    assert len(bases) == 2
+    assert [b["key"] for b in bases] == ["rock", "pop"]
+
+    assert engine.select_bases([]) == []  # type: ignore[arg-type]
+
+
+def test_base_mix_sums_to_one() -> None:
+    """Test a genre with real overlap against multiple bases gets a base_mix summing to 1.0."""
+    # "indie" artist also tagged "rock"; another "indie" artist also tagged "pop" — indie's
+    # affinity should split across both bases proportional to listen weight.
+    meta = {
+        "a1": ArtistMeta("a1", "A1", None, ("indie", "rock"), None, None, None),
+        "a2": ArtistMeta("a2", "A2", None, ("indie", "pop"), None, None, None),
+        "a3": ArtistMeta("a3", "A3", None, ("rock",), None, None, None),
+        "a4": ArtistMeta("a4", "A4", None, ("pop",), None, None, None),
+        # give the engine two more, higher-share genres so "indie" itself isn't a base — it
+        # should be the one *measured* genre whose base_mix we assert on.
+        "a5": ArtistMeta("a5", "A5", None, ("jazz",), None, None, None),
+        "a6": ArtistMeta("a6", "A6", None, ("folk",), None, None, None),
+    }
+    inputs = _inputs(
+        [
+            _listen(artist_key="a1", track_key="t1"),
+            _listen(artist_key="a2", track_key="t2"),
+            _listen(artist_key="a3", track_key="t3"),
+            _listen(artist_key="a4", track_key="t4"),
+            _listen(artist_key="a5", track_key="t5a"),
+            _listen(artist_key="a5", track_key="t5b"),
+            _listen(artist_key="a6", track_key="t6a"),
+            _listen(artist_key="a6", track_key="t6b"),
+        ],
+        artist_meta=meta,
+        params=_params(half_life_days=0),
+    )
+    result = engine.build_genome(inputs)
+    indie = next(g for g in result["genres"] if g["key"] == "indie")
+    assert "indie" not in {b["key"] for b in result["bases"]}
+    assert indie["base_mix"]
+    assert abs(sum(indie["base_mix"]) - 1.0) < 1e-9
+    assert len(indie["base_mix"]) == len(result["bases"])
+    # indie has one listen overlapping "rock" and one overlapping "pop", none overlapping the
+    # other two bases => an even split across exactly those two positions.
+    base_order = [b["key"] for b in result["bases"]]
+    by_base = dict(zip(base_order, indie["base_mix"], strict=True))
+    assert by_base["rock"] == 0.5
+    assert by_base["pop"] == 0.5
+    assert by_base["jazz"] == 0.0
+    assert by_base["folk"] == 0.0
+
+
+def test_base_mix_zero_overlap_is_empty_not_uniform() -> None:
+    """Test a genre with zero overlap with any base gets an empty base_mix, not a 25pct split."""
+    meta = {
+        "rock": ArtistMeta("rock", "Rock", None, ("rock",), None, None, None),
+        "pop": ArtistMeta("pop", "Pop", None, ("pop",), None, None, None),
+        "jazz": ArtistMeta("jazz", "Jazz", None, ("jazz",), None, None, None),
+        "folk": ArtistMeta("folk", "Folk", None, ("folk",), None, None, None),
+        # "ambient" only ever co-occurs with "drone", neither of which is a base below.
+        "ambient1": ArtistMeta(
+            "ambient1", "Ambient1", None, ("ambient", "drone"), None, None, None
+        ),
+        "drone": ArtistMeta("drone", "Drone", None, ("drone",), None, None, None),
+    }
+    listens = (
+        [_listen(artist_key="rock", track_key=f"r{i}") for i in range(4)]
+        + [_listen(artist_key="pop", track_key=f"p{i}") for i in range(3)]
+        + [_listen(artist_key="jazz", track_key=f"j{i}") for i in range(2)]
+        + [_listen(artist_key="folk", track_key=f"f{i}") for i in range(2)]
+        + [_listen(artist_key="drone", track_key="d0")]
+        + [_listen(artist_key="ambient1", track_key="a0")]
+    )
+    inputs = _inputs(listens, artist_meta=meta, params=_params(half_life_days=0))
+    result = engine.build_genome(inputs)
+    base_keys = {b["key"] for b in result["bases"]}
+    assert base_keys == {"rock", "pop", "jazz", "folk"}
+    assert "ambient" not in base_keys
+    assert "drone" not in base_keys
+    ambient = next(g for g in result["genres"] if g["key"] == "ambient")
+    assert ambient["base_mix"] == []
+
+
+def test_base_mix_single_genre_artist_contributes_no_overlap() -> None:
+    """Test an artist resolved to only one genre contributes to no overlap for that genre."""
+    meta = {
+        # every "shoegaze" listen comes from single-genre artists, so shoegaze can never
+        # overlap with any base no matter how many listens it accumulates.
+        "a1": ArtistMeta("a1", "A1", None, ("shoegaze",), None, None, None),
+        "a2": ArtistMeta("a2", "A2", None, ("rock",), None, None, None),
+        "a3": ArtistMeta("a3", "A3", None, ("pop",), None, None, None),
+    }
+    inputs = _inputs(
+        [
+            _listen(artist_key="a1", track_key="t1"),
+            _listen(artist_key="a2", track_key="t2"),
+            _listen(artist_key="a3", track_key="t3"),
+        ],
+        artist_meta=meta,
+        params=_params(half_life_days=0),
+    )
+    mix = engine.base_mix_for_genres(inputs, ["rock", "pop"])
+    assert mix["shoegaze"] == []
+
+
+def test_base_mix_excludes_unenriched_artists() -> None:
+    """Test listens from an unresolved (no genre) artist never enter the overlap calculation."""
+    meta = {
+        "a1": ArtistMeta("a1", "A1", None, ("indie", "rock"), None, None, None),
+        "a2": ArtistMeta("a2", "A2", None, ("rock",), None, None, None),
+        # "a3" is unenriched: no meta row at all.
+    }
+    inputs = _inputs(
+        [
+            _listen(artist_key="a1", track_key="t1"),
+            _listen(artist_key="a2", track_key="t2"),
+            _listen(artist_key="a3", track_key="t3"),
+        ],
+        artist_meta=meta,
+        params=_params(half_life_days=0),
+    )
+    mix = engine.base_mix_for_genres(inputs, ["rock"])
+    # a3 has no meta at all, so it must not silently register as "no overlap" weight for
+    # any genre — "indie" only ever came from a1, which fully overlaps "rock".
+    assert mix["indie"] == [1.0]
+
+
+def test_base_mix_for_genres_empty_base_keys_returns_empty_dict() -> None:
+    """Test base_mix_for_genres with no bases (e.g. a brand-new listener) returns {}."""
+    inputs = _inputs([_listen()], params=_params(half_life_days=0))
+    assert engine.base_mix_for_genres(inputs, []) == {}
+
+
+def test_genre_share_ratio_exposed_on_every_genre_not_only_top_over_under() -> None:
+    """Test every entry in the genres list carries its own ratio, not only the top over/under."""
+    meta = {
+        "a1": ArtistMeta("a1", "A1", None, ("rock", "jazz"), None, None, None),
+    }
+    inputs = _inputs(
+        [_listen(artist_key="a1")],
+        artist_meta=meta,
+        baseline=_baseline(genre_shares={"rock": 0.9, "jazz": 0.1}),
+        params=_params(half_life_days=0),
+    )
+    result = engine.build_genome(inputs)
+    assert len(result["genres"]) == 2
+    for genre in result["genres"]:
+        assert "ratio" in genre
+        expected = min(genre["share"] / max(genre["baseline_share"], 1e-6), 99.0)
+        assert abs(genre["ratio"] - round(expected, 4)) < 1e-6
+
+
+def test_base_genre_rows_carry_empty_base_mix() -> None:
+    """Test a genre that is itself one of the bases never gets a self-affinity base_mix."""
+    meta = {
+        "a1": ArtistMeta("a1", "A1", None, ("rock",), None, None, None),
+    }
+    inputs = _inputs(
+        [_listen(artist_key="a1")],
+        artist_meta=meta,
+        params=_params(half_life_days=0),
+    )
+    result = engine.build_genome(inputs)
+    assert result["bases"][0]["key"] == "rock"
+    assert result["bases"][0]["base_mix"] == []

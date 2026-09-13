@@ -106,7 +106,21 @@ class GenomeInputs:
 
 
 class GenreShare(TypedDict):
-    """One genre's share of household listening versus the baseline."""
+    """
+    One genre's share of household listening versus the baseline.
+
+    ``ratio`` (``share / max(baseline_share, 1e-6)``, clamped to 99.0) is present on every
+    row — the "Listening Genome" visual's per-genre Overexpressed/Stable/Underexpressed status
+    is derived from it client-side; the server does not invent the thresholds.
+
+    ``base_mix`` supports the "four bases" DNA visual (see ``GenomeResult.bases``): for a
+    non-base genre it is that genre's affinity to each of the (up to four) base genres, as
+    fractions of the same length and order as ``GenomeResult.bases`` that sum to ``1.0``.
+    It is an empty list when the affinity cannot be honestly computed — see
+    :func:`.engine.base_mix_for_genres` for exactly which cases those are — and always an
+    empty list on a base genre's own row (a base's affinity to itself is not a meaningful
+    figure the frontend needs).
+    """
 
     key: str
     label: str
@@ -114,6 +128,7 @@ class GenreShare(TypedDict):
     baseline_share: float
     ratio: float
     contribution: float
+    base_mix: list[float]
 
 
 class ArtistFact(TypedDict):
@@ -232,6 +247,7 @@ class GenomeResult(TypedDict):
     half_life_days: int
     stats: GenomeStats
     genres: list[GenreShare]
+    bases: list[GenreShare]  # top 4 genres by share; the DNA visual's four "bases" (0-4 entries)
     divergence: DivergenceFacts
     obscurity: ObscurityFacts
     era: EraFacts
