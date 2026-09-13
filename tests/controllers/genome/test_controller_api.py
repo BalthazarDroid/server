@@ -48,9 +48,22 @@ def _listen(**overrides: object) -> Listen:
     return Listen(**base)  # type: ignore[arg-type]
 
 
-async def _fake_apple_parser(path: str, *, min_seconds: int):  # noqa: ARG001
+async def _fake_apple_parser(path: str, *, min_seconds: int, stats=None):  # noqa: ARG001
     # signature must match GenomeController._apple_parser exactly (positional `path`,
-    # keyword-only `min_seconds`) - the fake never needs either value itself
+    # keyword-only `min_seconds`/`stats`) - the fake never needs path/min_seconds itself
+    if stats is not None:
+        stats.rows_read = 1
+    yield _listen(source="apple_export")
+
+
+async def _fake_apple_parser_with_skips(path: str, *, min_seconds: int, stats=None):  # noqa: ARG001
+    # simulates a CSV with 3 raw rows where 2 were filtered out by the parser itself (bad
+    # data, or below min_seconds) - only the store-level dedupe accounting is visible unless
+    # this stats sidecar is threaded through and merged into the returned GenomeImportResult
+    if stats is not None:
+        stats.rows_read = 3
+        stats.rows_skipped = 2
+        stats.warnings.append("row 2: missing artist name")
     yield _listen(source="apple_export")
 
 
@@ -106,6 +119,33 @@ async def test_rebuild_now_action_rebuilds(
     result = await genome_controller.handle_config_action(CONF_ACTION_REBUILD_NOW)
     assert result is not None
     assert genome_store.cache[LISTENER_HOUSEHOLD]["stats"]["total_listens"] == 1
+
+
+async def test_rebuild_now_action_reports_listens_used(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """A populated store's rebuild result must say how many listens it actually used."""
+    genome_store.listens.append(_listen())
+    result = await genome_controller.handle_config_action(CONF_ACTION_REBUILD_NOW)
+    assert result is not None
+    assert result.translation_key == f"{CONF_ACTION_REBUILD_NOW}.result"
+    assert result.translation_args == ["1"]
+
+
+async def test_rebuild_now_action_on_empty_store_says_so(
+    genome_controller: GenomeController,
+) -> None:
+    """
+    An empty-store rebuild must be distinguishable from a real failure.
+
+    Before this fix, `rebuild_now` over an empty store returned the exact same generic
+    "rebuilt" result as a real rebuild, with zero indication that nothing was actually there
+    to rebuild from.
+    """
+    result = await genome_controller.handle_config_action(CONF_ACTION_REBUILD_NOW)
+    assert result is not None
+    assert result.translation_key == f"{CONF_ACTION_REBUILD_NOW}.result_empty"
+    assert result.translation_key != f"{CONF_ACTION_REBUILD_NOW}.result"
 
 
 async def test_clear_genome_data_action_clears_store(
@@ -253,6 +293,24 @@ async def test_apple_import_without_upload_id_or_dir_raises(
     """Test apple import without upload id or dir raises."""
     with pytest.raises(InvalidDataError):
         await genome_controller.import_apple("", 0, "", final=True, filename="export.csv")
+
+
+async def test_apple_import_propagates_parser_warnings_and_rows_skipped(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """The CSV parser's own rows_skipped/warnings must reach the returned GenomeImportResult."""
+    genome_controller._apple_parser = _fake_apple_parser_with_skips
+    genome_controller.get_config_value = lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+        "/some/dir" if key == CONF_APPLE_IMPORT_DIR else default
+    )
+    result = await genome_controller.import_apple(
+        "", 0, "", final=True, filename="Apple Music Play Activity.csv"
+    )
+    assert result["rows_read"] == 3
+    assert result["rows_skipped"] == 2
+    assert result["rows_imported"] == 1
+    assert result["warnings"] == ["row 2: missing artist name"]
+    assert len(genome_store.listens) == 1
 
 
 # ---------------------------------------------------------------------------------------

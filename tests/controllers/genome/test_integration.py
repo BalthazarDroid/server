@@ -109,7 +109,10 @@ def _build_mass(*, storage_path: str, database: DatabaseConnection | None = None
         subscribe=subscribe,
         create_task=create_task,
         get_provider=lambda _domain: None,
-        tasks=types.SimpleNamespace(register_scheduled_task=lambda **_k: None),
+        tasks=types.SimpleNamespace(
+            register_scheduled_task=lambda **_k: None,
+            unregister_scheduled_task=lambda *_a, **_k: None,
+        ),
         config=types.SimpleNamespace(get_raw_core_config_value=lambda *_a, **_k: "GLOBAL"),
         music=types.SimpleNamespace(database=database),
     )
