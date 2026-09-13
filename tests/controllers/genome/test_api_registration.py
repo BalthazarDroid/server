@@ -14,7 +14,8 @@ the whole server down. These tests reproduce the registration step directly.
 
 from __future__ import annotations
 
-from typing import get_type_hints
+import inspect
+from typing import Any, get_type_hints
 
 import pytest
 
@@ -62,3 +63,62 @@ def test_api_command_annotations_resolve_at_runtime(name: str, func: object) -> 
             "A name used in an @api_command signature is imported only under TYPE_CHECKING. "
             "Move it into the module-level import in controller.py."
         )
+
+
+# ---------------------------------------------------------------------------------------
+# Argument parsing — resolving the annotations is only half of registration. MA then parses
+# every incoming argument against them with helpers/api.py::parse_arguments, which bottoms
+# out in `isinstance(value, value_type)`. A TypedDict cannot be used with isinstance at all
+# ("TypedDict does not support instance and class checks"), so a TypedDict parameter type
+# passes the hint-resolution test above and then fails on every real call.
+# ---------------------------------------------------------------------------------------
+
+# one representative payload per command, shaped the way the frontend sends it
+_SAMPLE_ARGS: dict[str, dict[str, Any]] = {
+    "get_genome": {"listener": "household", "refresh": False},
+    "rebuild": {"listener": "household", "enrich": True},
+    "import_apple": {
+        "upload_id": "u1",
+        "seq": 0,
+        "chunk_b64": "",
+        "final": True,
+        "filename": "a.csv",
+    },
+    "import_lastfm": {"username": "Bob_Baird", "max_pages": 1},
+    "get_settings": {},
+    "set_settings": {"settings": {"lastfm_username": "Bob_Baird", "lastfm_api_key": "a" * 32}},
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "func"), _api_command_methods(), ids=[n for n, _ in _api_command_methods()]
+)
+def test_api_command_arguments_parse(name: str, func: Any) -> None:
+    """
+    MA must be able to parse each command's arguments against its own annotations.
+
+    This is the call MA makes on every websocket request. Regression test for a real incident:
+    `set_settings` took a TypedDict, which resolved fine at registration and then raised
+    "TypedDict does not support instance and class checks" on every invocation.
+    """
+    from music_assistant.helpers.api import parse_arguments  # noqa: PLC0415
+
+    assert name in _SAMPLE_ARGS, (
+        f"No sample arguments for GenomeController.{name}. Add one to _SAMPLE_ARGS so this "
+        "command's parameter types are covered."
+    )
+    signature = inspect.signature(func)
+    # MA drops `self` before parsing; mirror that
+    params = [p for p in signature.parameters.values() if p.name != "self"]
+    signature = signature.replace(parameters=params)
+    type_hints = {k: v for k, v in get_type_hints(func).items() if k != "return"}
+    try:
+        parse_arguments(signature, type_hints, _SAMPLE_ARGS[name], strict=True)
+    except TypeError as err:
+        if "does not support instance and class checks" in str(err):
+            pytest.fail(
+                f"GenomeController.{name}: {err}. A parameter is annotated with a TypedDict. "
+                "MA parses arguments with isinstance(), which TypedDict forbids — use a "
+                "mashumaro dataclass (DataClassDictMixin), which MA handles via from_dict."
+            )
+        raise

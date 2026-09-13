@@ -565,9 +565,11 @@ class GenomeController(CoreController):
             "apple_import_dir": CONF_APPLE_IMPORT_DIR,
         }
         values: dict[str, ConfigValueType] = {}
-        for field, value in settings.items():
-            if field in key_map:
-                values[key_map[field]] = cast("ConfigValueType", value)
+        for field, conf_key in key_map.items():
+            value = getattr(settings, field, None)
+            # None means "not supplied" — only fields the caller actually set are written
+            if value is not None:
+                values[conf_key] = cast("ConfigValueType", value)
         if values:
             await self.mass.config.save_core_config(self.domain, values)
         return await self.get_settings()

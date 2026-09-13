@@ -27,6 +27,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypedDict
 
+from mashumaro import DataClassDictMixin
+
 # ============================================================================================
 # §3.6 — engine inputs (pure dataclasses, no I/O)
 # ============================================================================================
@@ -276,14 +278,27 @@ class GenomeSettings(TypedDict):
     last_rebuild_at: int | None
 
 
-class GenomeSettingsPatch(TypedDict, total=False):
-    """Partial update accepted by ``genome/settings/set``; every field is optional."""
+@dataclass
+class GenomeSettingsPatch(DataClassDictMixin):
+    """
+    Partial update accepted by ``genome/settings/set``; every field is optional.
 
-    half_life_days: int
-    lastfm_username: str
-    lastfm_api_key: str
-    lastfm_poll_enabled: bool
-    enrich_enabled: bool
-    obscurity_percentile: int
-    min_seconds_played: int
-    apple_import_dir: str
+    Deliberately a mashumaro dataclass rather than a ``TypedDict``, unlike the rest of the
+    §3.4 contract. Music Assistant parses incoming api_command arguments with
+    ``helpers/api.py::parse_value``, which ends in ``isinstance(value, value_type)`` — and a
+    ``TypedDict`` cannot be used with ``isinstance`` at all ("TypedDict does not support
+    instance and class checks"), so every call raised before reaching the handler. MA does
+    support any type exposing ``from_dict``, which ``DataClassDictMixin`` provides, and the
+    wire format is unchanged: still a plain JSON object of the same keys.
+
+    ``None`` means "leave this setting alone" — it is never written through as a value.
+    """
+
+    half_life_days: int | None = None
+    lastfm_username: str | None = None
+    lastfm_api_key: str | None = None
+    lastfm_poll_enabled: bool | None = None
+    enrich_enabled: bool | None = None
+    obscurity_percentile: int | None = None
+    min_seconds_played: int | None = None
+    apple_import_dir: str | None = None
