@@ -51,14 +51,16 @@
   },
   "config_actions": {
     "rebuild_now": {
-      "result": "The listening genome has been rebuilt"
+      "result": "The listening genome has been rebuilt from {0} listens",
+      "result_empty": "No listening history yet — nothing to rebuild. Import your Last.fm or Apple Music history from the Listening Genome settings page first."
     },
     "clear_genome_data": {
       "result": "All genome data has been cleared"
     }
   },
   "background_task": {
-    "genome_rebuild": "Listening genome rebuild"
+    "genome_rebuild": "Listening genome rebuild",
+    "genome_lastfm_poll": "Listening genome Last.fm poll"
   },
   "manifest": {
     "name": "Listening Genome",

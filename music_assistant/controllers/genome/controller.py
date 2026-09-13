@@ -55,6 +55,7 @@ from .constants import (
     DEFAULT_OBSCURITY_PERCENTILE,
     DEFAULT_REBUILD_SCHEDULE_HOUR,
     DEFAULT_TOP_N,
+    GENOME_LASTFM_POLL_TASK_ID,
     GENOME_REBUILD_TASK_ID,
     GENOME_UPLOAD_CHUNK_MAX_B64_BYTES,
     GENOME_UPLOAD_MAX_TOTAL_BYTES,
@@ -86,6 +87,7 @@ if TYPE_CHECKING:
 
     from music_assistant.mass import MusicAssistant
 
+    from .importers.apple_csv import ApplePlayActivityStats
     from .models import ArtistMeta, Baseline, Listen
 
 
@@ -143,13 +145,15 @@ def _create_default_store(mass: MusicAssistant) -> _GenomeStoreProtocol:
     return GenomeStore(mass)
 
 
-async def _default_apple_parser(path: str, *, min_seconds: int) -> AsyncIterator[Listen]:
+async def _default_apple_parser(
+    path: str, *, min_seconds: int, stats: ApplePlayActivityStats | None = None
+) -> AsyncIterator[Listen]:
     """Lazily delegate to the real Apple Music CSV parser (owned by a separate work package)."""
     from music_assistant.controllers.genome.importers.apple_csv import (  # noqa: PLC0415
         parse_play_activity,
     )
 
-    async for listen in parse_play_activity(path, min_seconds=min_seconds):
+    async for listen in parse_play_activity(path, min_seconds=min_seconds, stats=stats):
         yield listen
 
 
@@ -272,8 +276,16 @@ class GenomeController(CoreController):
     ) -> tuple[ConfigEntry, ...] | ConfigActionResult | None:
         """Handle a one-shot config action button press (§3.2)."""
         if action == CONF_ACTION_REBUILD_NOW:
-            await self.rebuild()
-            return ConfigActionResult(translation_key=f"{CONF_ACTION_REBUILD_NOW}.result")
+            rebuild_result = await self.rebuild()
+            listens_scanned = rebuild_result["listens_scanned"]
+            if listens_scanned == 0:
+                return ConfigActionResult(
+                    translation_key=f"{CONF_ACTION_REBUILD_NOW}.result_empty",
+                )
+            return ConfigActionResult(
+                translation_key=f"{CONF_ACTION_REBUILD_NOW}.result",
+                translation_args=[str(listens_scanned)],
+            )
         if action == CONF_ACTION_CLEAR_GENOME_DATA:
             await self.store.clear()
             return ConfigActionResult(translation_key=f"{CONF_ACTION_CLEAR_GENOME_DATA}.result")
@@ -296,6 +308,13 @@ class GenomeController(CoreController):
         if not await self.store.backfill_done():
             self.mass.create_task(self._run_ma_backfill(playlog_importer))
         self._register_rebuild_task()
+        self._register_lastfm_poll_task()
+        listen_count = await self.store.count_listens(LISTENER_HOUSEHOLD)
+        LOGGER.info(
+            "Genome controller setup complete: baseline %s, %d listens stored",
+            self.baseline.version,
+            listen_count,
+        )
 
     async def close(self) -> None:
         """Unsubscribe live playlog capture and close storage on server stop."""
@@ -305,10 +324,17 @@ class GenomeController(CoreController):
         await self.store.close()
 
     async def update_config(self, config: CoreConfig, changed_keys: set[str]) -> None:
-        """Re-register the scheduled rebuild when its hour changes; defer the rest to the base."""
+        """Re-register the scheduled tasks affected by the changed keys; defer the rest to base."""
         await super().update_config(config, changed_keys)
         if f"values/{CONF_REBUILD_SCHEDULE_HOUR}" in changed_keys:
             self._register_rebuild_task()
+        if changed_keys & {
+            f"values/{CONF_LASTFM_POLL_ENABLED}",
+            f"values/{CONF_LASTFM_POLL_INTERVAL_HOURS}",
+            f"values/{CONF_LASTFM_USERNAME}",
+            f"values/{CONF_LASTFM_API_KEY}",
+        }:
+            self._register_lastfm_poll_task()
 
     @api_command("genome/get", required_scope=Scope.LIBRARY_READ)
     async def get_genome(
@@ -501,6 +527,69 @@ class GenomeController(CoreController):
         """Scheduled-task entry point: rebuild the household genome."""
         await self.rebuild(LISTENER_HOUSEHOLD)
 
+    def _register_lastfm_poll_task(self) -> None:
+        """
+        Register, re-register or unregister the recurring Last.fm poll (§3.2, §3.8).
+
+        Music Assistant's scheduled-task API only offers hourly/daily/weekly cadences (no
+        arbitrary interval-in-hours primitive), so ``lastfm_poll_interval_hours`` maps directly
+        onto ``TaskSchedule.hourly(every=interval_hours)`` — the closest correct fit, and exactly
+        what MA's other "poll every N hours" integrations use (see
+        ``providers/lastfm_recommendations``). The task is unregistered outright whenever
+        polling is turned off or Last.fm is not fully configured, so a stale task can never fire
+        against a blank username/API key.
+        """
+        # imported here, not at module scope, to keep this file's happy-path imports light for
+        # tests that never touch scheduling
+        from music_assistant_models.background_task import TaskSchedule  # noqa: PLC0415
+
+        enabled = self.get_config_value(
+            CONF_LASTFM_POLL_ENABLED, DEFAULT_LASTFM_POLL_ENABLED, return_type=bool
+        )
+        username = self.get_config_value(
+            CONF_LASTFM_USERNAME, DEFAULT_LASTFM_USERNAME, return_type=str
+        )
+        api_key = self.get_config_value(
+            CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
+        )
+        if not enabled or not username or not api_key:
+            self.mass.tasks.unregister_scheduled_task(GENOME_LASTFM_POLL_TASK_ID)
+            LOGGER.info(
+                "Last.fm polling disabled%s",
+                "" if enabled else " (poll toggle is off)",
+            )
+            return
+        interval_hours = self.get_config_value(
+            CONF_LASTFM_POLL_INTERVAL_HOURS, DEFAULT_LASTFM_POLL_INTERVAL_HOURS, return_type=int
+        )
+        self.mass.tasks.register_scheduled_task(
+            task_id=GENOME_LASTFM_POLL_TASK_ID,
+            name="Genome Last.fm poll",
+            handler=self._scheduled_lastfm_poll,
+            schedule=TaskSchedule.hourly(every=max(interval_hours, 1)),
+            translation_key=GENOME_LASTFM_POLL_TASK_ID,
+            translation_owner=self.translation_owner,
+            metadata={"task_domain": GENOME_LASTFM_POLL_TASK_ID},
+            allow_retry=True,
+        )
+        LOGGER.info("Last.fm polling enabled: every %d hour(s) for %s", interval_hours, username)
+
+    async def _scheduled_lastfm_poll(self) -> None:
+        """Scheduled-task entry point: poll Last.fm for new scrobbles."""
+        try:
+            result = await self.import_lastfm()
+        except InvalidDataError:
+            # config raced out from under an in-flight scheduled run; the next re-registration
+            # (triggered by update_config) already handles unregistering the task itself
+            LOGGER.debug("Skipping scheduled Last.fm poll: not configured")
+            return
+        LOGGER.info(
+            "Scheduled Last.fm poll: %d rows added, %d skipped, %d duplicate",
+            result["rows_imported"],
+            result["rows_skipped"],
+            result["rows_duplicate"],
+        )
+
     async def _run_ma_backfill(self, playlog_importer: Any) -> None:
         """
         Run the one-time MA playlog/tracks backfill in the background, then mark it done.
@@ -560,6 +649,14 @@ class GenomeController(CoreController):
         await self.store.set_cached_genome(listener, genome)
         self.last_rebuild_at = params.now
         duration_ms = int((time.monotonic() - start) * 1000)
+        LOGGER.info(
+            "Genome rebuilt for %s: %d listens, %d artists enriched, %d%% divergence, %dms",
+            listener,
+            len(listens),
+            artists_enriched,
+            genome["divergence"]["percent"],
+            duration_ms,
+        )
         return GenomeRebuildResult(
             listener=listener,
             listens_scanned=len(listens),
@@ -616,15 +713,42 @@ class GenomeController(CoreController):
                     }
                     if updates:
                         await self.store.update_lb_popularity(updates)
+                    LOGGER.info(
+                        "ListenBrainz popularity enrichment: %d/%d artists updated",
+                        len(updates),
+                        len(mbid_by_key),
+                    )
         return resolved
 
     async def _ingest_apple_csv(self, path: str) -> GenomeImportResult:
         """Parse an Apple Music export CSV and store the resulting listens."""
+        from .importers.apple_csv import ApplePlayActivityStats  # noqa: PLC0415
+
         min_seconds = self.get_config_value(
             CONF_MIN_SECONDS_PLAYED, DEFAULT_MIN_SECONDS_PLAYED, return_type=int
         )
-        listens = [listen async for listen in self._apple_parser(path, min_seconds=min_seconds)]
-        return await self.store.add_listens(listens, listener=LISTENER_HOUSEHOLD)
+        LOGGER.info("Apple Music CSV import starting: %s", path)
+        stats = ApplePlayActivityStats()
+        listens = [
+            listen
+            async for listen in self._apple_parser(path, min_seconds=min_seconds, stats=stats)
+        ]
+        result = await self.store.add_listens(listens, listener=LISTENER_HOUSEHOLD)
+        # the store only ever sees the rows that survived parsing (`listens`), so its own
+        # rows_read/rows_skipped/warnings would silently hide anything the CSV parser itself
+        # filtered out (bad rows, missing columns, below min_seconds); the parser's own
+        # ApplePlayActivityStats sidecar is the source of truth for those (docs/STATUS.md).
+        result["rows_read"] = stats.rows_read
+        result["rows_skipped"] = stats.rows_skipped
+        result["warnings"] = list(stats.warnings)
+        LOGGER.info(
+            "Apple Music CSV import finished: %d rows read, %d imported, %d skipped, %d duplicate",
+            result["rows_read"],
+            result["rows_imported"],
+            result["rows_skipped"],
+            result["rows_duplicate"],
+        )
+        return result
 
     async def _append_upload_chunk(self, upload_id: str, seq: int, chunk_b64: str) -> None:
         """Validate and append one base64 chunk to an in-progress upload (§3.3)."""
