@@ -205,6 +205,10 @@ class StubGenomeStore:
     async def mark_lastfm_backfill_done(self) -> None:
         """No-op: nothing to persist in the stub."""
 
+    async def artist_resolution_counts(self) -> dict[str, int]:
+        """No known artists in the stub by default."""
+        return {}
+
 
 @pytest.fixture
 def genome_store() -> StubGenomeStore:

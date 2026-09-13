@@ -122,3 +122,15 @@ LASTFM_RETRY_MAX_DELAY_SECONDS: Final[float] = 8.0
 
 LISTENBRAINZ_POPULARITY_URL: Final[str] = "https://api.listenbrainz.org/1/popularity/artist"
 LISTENBRAINZ_POPULARITY_BATCH_SIZE: Final[int] = 50
+
+# --- MusicBrainz enrichment pacing (§3.8, P3) ------------------------------------------
+# MusicBrainz's own documented courtesy limit is ~1 req/sec; MA's shared, throttled client
+# (rate_limit=10, period=10) allows bursts of 10 in under a second, which is enough on its own
+# to trip the hosted mirror's own rate limiter (observed: a 63s `Retry-After` after a 200-artist
+# pass). Genome paces its *own* calls on top of that shared throttler, comfortably under 1/sec,
+# so it stops relying on that 63s penalty path at all.
+GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS: Final[float] = 1.1
+GENOME_ENRICHMENT_TASK_ID: Final[str] = "genome_enrichment"
+# generous per-run ceiling for the continuous background enrichment pass; the pacing above -
+# not this number - is what bounds real-world duration (~1.1s/artist)
+GENOME_ENRICHMENT_BATCH_LIMIT: Final[int] = 2000

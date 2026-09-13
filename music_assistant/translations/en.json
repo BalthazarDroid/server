@@ -660,6 +660,7 @@
   "core.discovery.config_entries.upnp_network_scan.label": "Allow network scan for UPnP discovery",
   "core.discovery.manifest.description": "Handles mDNS/Zeroconf, SSDP/UPnP discovery and Music Assistant network broadcast.",
   "core.discovery.manifest.name": "Discovery",
+  "core.genome.background_task.genome_enrichment": "Listening genome MusicBrainz enrichment",
   "core.genome.background_task.genome_lastfm_poll": "Listening genome Last.fm poll",
   "core.genome.background_task.genome_rebuild": "Listening genome rebuild",
   "core.genome.config_actions.clear_genome_data.result": "All genome data has been cleared",

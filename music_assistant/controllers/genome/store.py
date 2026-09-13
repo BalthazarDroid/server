@@ -456,6 +456,21 @@ class GenomeStore:
         )
         await self.database.commit()
 
+    async def artist_resolution_counts(self) -> dict[str, int]:
+        """
+        Return ``{resolve_state: count}`` across every known artist (P3).
+
+        Lets the controller surface "N artists still resolving" in ``genome/get`` stats without
+        the pure, I/O-free ``engine.py`` needing to know about ``resolve_state`` at all.
+        """
+        assert self.database is not None
+        rows = await self.database.get_rows_from_query(
+            f"SELECT resolve_state, COUNT(*) AS n FROM {DB_TABLE_GENOME_ARTIST_META} "
+            "GROUP BY resolve_state",
+            limit=0,
+        )
+        return {row["resolve_state"]: int(row["n"]) for row in rows}
+
     async def dedupe_window(self) -> int:
         """
         Drop non-MA listens that duplicate an MA-sourced listen within ±90s (§3.1).

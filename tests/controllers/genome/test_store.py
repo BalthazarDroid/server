@@ -196,3 +196,22 @@ async def test_lastfm_backfill_done_defaults_false_and_persists(tmp_path: Path) 
         assert await store.backfill_done() is False
     finally:
         await store.close()
+
+
+async def test_artist_resolution_counts_groups_by_state(tmp_path: Path) -> None:
+    """artist_resolution_counts (P3) reports a count per resolve_state across all artists."""
+    store = await _new_store(tmp_path)
+    try:
+        assert await store.artist_resolution_counts() == {}
+        await store.add_listens([_listen()], listener="household")  # -> one pending stub
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "resolved-artist", "artist_name": "Resolved Artist"}], state="ok"
+        )
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "missing-artist", "artist_name": "Missing Artist"}],
+            state="not_found",
+        )
+        counts = await store.artist_resolution_counts()
+        assert counts == {"pending": 1, "ok": 1, "not_found": 1}
+    finally:
+        await store.close()

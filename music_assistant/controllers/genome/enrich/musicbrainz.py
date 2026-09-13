@@ -16,7 +16,9 @@ itself calls) when the provider is loaded, and the plain ``HttpClient`` otherwis
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -111,6 +113,7 @@ async def enrich_pending_artists(
     client: HttpClient,
     mass: MusicAssistant | None = None,
     limit: int = 200,
+    min_interval_seconds: float = 0.0,
 ) -> int:
     """
     Resolve and store MusicBrainz metadata for pending artists, one at a time.
@@ -123,6 +126,12 @@ async def enrich_pending_artists(
     :param client: The :class:`HttpClient` fallback for artists without a loaded provider.
     :param mass: The running :class:`MusicAssistant` instance, used to prefer the loaded provider.
     :param limit: The maximum number of artists to resolve in this pass.
+    :param min_interval_seconds: Minimum wall-clock spacing between artists' MusicBrainz lookups
+        (§3.8, P3). ``0`` (the default) issues lookups back-to-back, relying entirely on the
+        shared client's own throttling - appropriate for a short, interactive rebuild pass.
+        A continuous background pass over a large backlog should pace itself here instead,
+        comfortably under MusicBrainz's ~1 req/sec courtesy limit, rather than relying on its
+        429/``Retry-After`` path (observed: a 63s penalty after a 200-artist burst).
     :return: The number of artists successfully resolved (``resolve_state="ok"``).
     """
     pending = await store.pending_artist_keys(limit=limit)
@@ -130,7 +139,13 @@ async def enrich_pending_artists(
         return 0
     LOGGER.info("MusicBrainz enrichment pass starting: %d pending artists", len(pending))
     resolved = 0
+    last_call = 0.0
     for artist_key, artist_name in pending:
+        if min_interval_seconds > 0:
+            wait = min_interval_seconds - (time.monotonic() - last_call)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            last_call = time.monotonic()
         try:
             update = await resolve_artist(artist_name, client=client, mass=mass)
         except Exception as err:

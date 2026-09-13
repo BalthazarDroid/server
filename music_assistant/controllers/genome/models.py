@@ -179,6 +179,8 @@ class GenomeStats(TypedDict):
     last_listen: int | None
     coverage_by_source: dict[str, int]
     enrichment_coverage: float
+    artists_pending: int  # known artists not yet resolved (pending/error resolve_state)
+    artists_resolved: int  # known artists with a final resolution (ok/not_found resolve_state)
 
 
 class DivergenceFacts(TypedDict):

@@ -561,6 +561,11 @@ def _build_stats(inputs: GenomeInputs, total_w: float) -> GenomeStats:
         last_listen=max((listen.played_at for listen in listens), default=None),
         coverage_by_source=coverage_by_source,
         enrichment_coverage=_r4(known_genre_w / total_w) if total_w > 0 else 0.0,
+        # the pure engine has no visibility into `genome_artist_meta.resolve_state` across the
+        # *whole* store (only per-listen artist_meta lookups); the controller overwrites these
+        # with real counts from GenomeStore.artist_resolution_counts() after a rebuild (§3.8, P3)
+        artists_pending=0,
+        artists_resolved=0,
     )
 
 

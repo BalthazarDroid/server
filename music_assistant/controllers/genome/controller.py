@@ -57,7 +57,10 @@ from .constants import (
     DEFAULT_OBSCURITY_PERCENTILE,
     DEFAULT_REBUILD_SCHEDULE_HOUR,
     DEFAULT_TOP_N,
+    GENOME_ENRICHMENT_BATCH_LIMIT,
+    GENOME_ENRICHMENT_TASK_ID,
     GENOME_LASTFM_POLL_TASK_ID,
+    GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
     GENOME_REBUILD_TASK_ID,
     GENOME_UPLOAD_CHUNK_MAX_B64_BYTES,
     GENOME_UPLOAD_MAX_TOTAL_BYTES,
@@ -66,6 +69,10 @@ from .constants import (
     LASTFM_API_KEY_PATTERN,
     LISTENER_HOUSEHOLD,
     LOGGER,
+    RESOLVE_STATE_ERROR,
+    RESOLVE_STATE_NOT_FOUND,
+    RESOLVE_STATE_OK,
+    RESOLVE_STATE_PENDING,
     SOURCE_APPLE_EXPORT,
 )
 from .engine import build_genome
@@ -166,6 +173,9 @@ class _GenomeStoreProtocol(Protocol):
     async def update_lb_popularity(self, rows: dict[str, tuple[int, int]]) -> None: ...
     async def backfill_done(self) -> bool: ...
     async def mark_backfill_done(self) -> None: ...
+    async def lastfm_backfill_done(self) -> bool: ...
+    async def mark_lastfm_backfill_done(self) -> None: ...
+    async def artist_resolution_counts(self) -> dict[str, int]: ...
 
 
 class _UploadState:
@@ -251,6 +261,9 @@ class GenomeController(CoreController):
         self._lastfm_importer_factory = _default_lastfm_importer_factory
         self._playlog_importer_factory = _default_playlog_importer_factory
         self._unsubscribe_playlog: Callable[[], None] | None = None
+        # serializes the daily rebuild's enrichment pass against the continuous background one
+        # (§3.8, P3) so the two never issue MusicBrainz requests at the same time
+        self._enrichment_lock = asyncio.Lock()
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """Return all Config Entries for the genome core module (§3.2)."""
@@ -356,6 +369,7 @@ class GenomeController(CoreController):
             self.mass.create_task(self._run_ma_backfill(playlog_importer))
         self._register_rebuild_task()
         self._register_lastfm_poll_task()
+        self._register_enrichment_task()
         listen_count = await self.store.count_listens(LISTENER_HOUSEHOLD)
         LOGGER.info(
             "Genome controller setup complete: baseline %s, %d listens stored",
@@ -669,6 +683,49 @@ class GenomeController(CoreController):
             result["rows_duplicate"],
         )
 
+    def _register_enrichment_task(self) -> None:
+        """
+        Register the continuous background MusicBrainz enrichment pass (§3.8, P3).
+
+        A fixed 200-artist pass that only ran once a day at rebuild time left a real backlog
+        (200 pending artists, hourly rebuild cadence measured in days) stuck behind MusicBrainz's
+        own rate limiter. This keeps draining the pending queue hourly, paced comfortably under
+        MusicBrainz's ~1 req/sec courtesy limit (:data:`GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS`)
+        instead of relying on its 429/`Retry-After` path, and persists each artist's resolution
+        immediately (:meth:`GenomeStore.upsert_artist_meta_full`), so a restart mid-pass loses at
+        most the one artist in flight.
+        """
+        from music_assistant_models.background_task import TaskSchedule  # noqa: PLC0415
+
+        self.mass.tasks.register_scheduled_task(
+            task_id=GENOME_ENRICHMENT_TASK_ID,
+            name="Genome MusicBrainz enrichment",
+            handler=self._scheduled_enrichment,
+            schedule=TaskSchedule.hourly(every=1),
+            translation_key=GENOME_ENRICHMENT_TASK_ID,
+            translation_owner=self.translation_owner,
+            metadata={"task_domain": GENOME_ENRICHMENT_TASK_ID},
+            allow_retry=True,
+        )
+
+    async def _scheduled_enrichment(self) -> None:
+        """Scheduled-task entry point: drain the pending-artist queue, paced under MB's limit."""
+        if not self.get_config_value(CONF_ENRICH_ENABLED, DEFAULT_ENRICH_ENABLED, return_type=bool):
+            LOGGER.debug("Skipping scheduled MusicBrainz enrichment: enrichment is disabled")
+            return
+        try:
+            resolved = await self._enrich_pending(
+                limit=GENOME_ENRICHMENT_BATCH_LIMIT,
+                min_interval_seconds=GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
+            )
+        except Exception:
+            # a background pass must never crash the task loop over a transient MB problem -
+            # the next hourly run tries again on its own
+            LOGGER.warning("Scheduled MusicBrainz enrichment pass failed", exc_info=True)
+            return
+        if resolved:
+            LOGGER.info("Scheduled MusicBrainz enrichment: %d artists resolved", resolved)
+
     async def _run_ma_backfill(self, playlog_importer: Any) -> None:
         """
         Run the one-time MA playlog/tracks backfill in the background, then mark it done.
@@ -725,6 +782,7 @@ class GenomeController(CoreController):
             player_names=player_names,
         )
         genome = build_genome(inputs, tz_offset_seconds=self._tz_offset_seconds())
+        await self._apply_resolution_counts(genome)
         await self.store.set_cached_genome(listener, genome)
         self.last_rebuild_at = params.now
         duration_ms = int((time.monotonic() - start) * 1000)
@@ -744,7 +802,21 @@ class GenomeController(CoreController):
             genome=genome,
         )
 
-    async def _enrich_pending(self) -> int:
+    async def _apply_resolution_counts(self, genome: GenomeResult) -> None:
+        """Overwrite the engine's placeholder ``artists_pending``/``artists_resolved`` with real counts."""
+        try:
+            counts = await self.store.artist_resolution_counts()
+        except Exception:  # pragma: no cover - defensive, must never fail a rebuild
+            LOGGER.debug("Could not read artist resolution counts", exc_info=True)
+            return
+        genome["stats"]["artists_pending"] = counts.get(RESOLVE_STATE_PENDING, 0) + counts.get(
+            RESOLVE_STATE_ERROR, 0
+        )
+        genome["stats"]["artists_resolved"] = counts.get(RESOLVE_STATE_OK, 0) + counts.get(
+            RESOLVE_STATE_NOT_FOUND, 0
+        )
+
+    async def _enrich_pending(self, *, limit: int = 200, min_interval_seconds: float = 0.0) -> int:
         """
         Resolve pending artist metadata via MusicBrainz, then ListenBrainz popularity (§3.8).
 
@@ -754,6 +826,14 @@ class GenomeController(CoreController):
         write ``mbid``/``genres``/``mb_tags`` safely; popularity is merged afterwards through
         :meth:`_GenomeStoreProtocol.update_lb_popularity`, which only ever updates the two
         ``lb_*`` columns so it can never clobber the genre data the first pass just wrote.
+
+        Serialized against the continuous background enrichment pass (:attr:`_enrichment_lock`)
+        so a daily rebuild and the hourly background pass never hammer MusicBrainz at once.
+
+        :param limit: The maximum number of pending artists to resolve in this pass.
+        :param min_interval_seconds: Minimum spacing between per-artist MusicBrainz lookups
+            (P3) - ``0`` (the default, used by an on-demand rebuild) leaves pacing entirely to
+            the shared, already-throttled MusicBrainz client.
         """
         try:
             from music_assistant.controllers.genome.enrich.listenbrainz import (  # noqa: PLC0415
@@ -767,37 +847,44 @@ class GenomeController(CoreController):
             LOGGER.debug("Genome enrichment modules not available yet; skipping enrichment")
             return 0
 
-        pending = await self.store.pending_artist_keys()
-        if not pending:
-            return 0
-        pending_keys = [artist_key for artist_key, _artist_name in pending]
-        mb_client = AiohttpClient(self.mass, rate_limit=10, period=10)
-        resolved = await enrich_pending_artists(self.store, client=mb_client, mass=self.mass)
-        if resolved:
-            meta = await self.store.get_artist_meta(pending_keys)
-            mbid_by_key = {key: m.mbid for key, m in meta.items() if m.mbid}
-            if mbid_by_key:
-                lb_client = AiohttpClient(self.mass, rate_limit=1, period=1.0)
-                try:
-                    popularity = await artist_popularity(
-                        list(mbid_by_key.values()), client=lb_client
-                    )
-                except Exception:
-                    LOGGER.warning("ListenBrainz popularity lookup failed", exc_info=True)
-                else:
-                    updates = {
-                        artist_key: (pop.listeners, pop.listen_count)
-                        for artist_key, mbid in mbid_by_key.items()
-                        if (pop := popularity.get(mbid)) is not None
-                    }
-                    if updates:
-                        await self.store.update_lb_popularity(updates)
-                    LOGGER.info(
-                        "ListenBrainz popularity enrichment: %d/%d artists updated",
-                        len(updates),
-                        len(mbid_by_key),
-                    )
-        return resolved
+        async with self._enrichment_lock:
+            pending = await self.store.pending_artist_keys(limit=limit)
+            if not pending:
+                return 0
+            pending_keys = [artist_key for artist_key, _artist_name in pending]
+            mb_client = AiohttpClient(self.mass, rate_limit=10, period=10)
+            resolved = await enrich_pending_artists(
+                self.store,
+                client=mb_client,
+                mass=self.mass,
+                limit=limit,
+                min_interval_seconds=min_interval_seconds,
+            )
+            if resolved:
+                meta = await self.store.get_artist_meta(pending_keys)
+                mbid_by_key = {key: m.mbid for key, m in meta.items() if m.mbid}
+                if mbid_by_key:
+                    lb_client = AiohttpClient(self.mass, rate_limit=1, period=1.0)
+                    try:
+                        popularity = await artist_popularity(
+                            list(mbid_by_key.values()), client=lb_client
+                        )
+                    except Exception:
+                        LOGGER.warning("ListenBrainz popularity lookup failed", exc_info=True)
+                    else:
+                        updates = {
+                            artist_key: (pop.listeners, pop.listen_count)
+                            for artist_key, mbid in mbid_by_key.items()
+                            if (pop := popularity.get(mbid)) is not None
+                        }
+                        if updates:
+                            await self.store.update_lb_popularity(updates)
+                        LOGGER.info(
+                            "ListenBrainz popularity enrichment: %d/%d artists updated",
+                            len(updates),
+                            len(mbid_by_key),
+                        )
+            return resolved
 
     async def _ingest_apple_csv(self, path: str) -> GenomeImportResult:
         """Parse an Apple Music export CSV and store the resulting listens."""
