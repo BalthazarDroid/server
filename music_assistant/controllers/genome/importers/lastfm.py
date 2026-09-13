@@ -21,8 +21,48 @@ from music_assistant.controllers.genome.constants import (
     LOGGER,
     SOURCE_LASTFM,
 )
+from music_assistant.controllers.genome.errors import LastfmApiError
 from music_assistant.controllers.genome.models import GenomeImportResult, Listen
 from music_assistant.helpers.util import parse_title_and_version
+
+# Last.fm's own `format=json` error convention: a 200 response whose body is
+# `{"error": <code>, "message": "..."}` rather than a `recenttracks` payload. Codes worth a
+# specific hint are listed here; anything else falls back to Last.fm's own message text.
+_LASTFM_ERROR_HINTS: dict[int, str] = {
+    6: "Check the Last.fm username configured for the import.",
+    10: "Check the Last.fm API key configured for the import.",
+    26: "Check the Last.fm API key configured for the import.",
+}
+
+
+def _describe_api_error(data: dict[str, Any]) -> str:
+    """Build a safe, actionable message from a Last.fm ``{"error": ..., "message": ...}`` body."""
+    code = data.get("error")
+    message = data.get("message") or "Last.fm rejected the request."
+    hint = _LASTFM_ERROR_HINTS.get(code) if isinstance(code, int) else None
+    return f"{message} {hint}" if hint else str(message)
+
+
+def _describe_fetch_error(err: Exception) -> str:
+    """
+    Build a safe, actionable message from a failed Last.fm HTTP request.
+
+    Deliberately never includes ``str(err)`` for a network/HTTP-layer exception: the request
+    URL (which carries the API key as a query parameter) can end up inside an HTTP client
+    exception's own string representation, and that must never reach a log line or a
+    user-facing message. Only well-known, non-secret attributes are read off ``err``.
+    """
+    status = getattr(err, "status", None)
+    if status == 403:
+        return "Last.fm rejected the request (403 Forbidden) — check the configured API key."
+    if status == 404:
+        return "Last.fm could not find that user (404 Not Found) — check the username."
+    if isinstance(err, TimeoutError):
+        return "Last.fm did not respond in time — try the import again in a moment."
+    if isinstance(status, int):
+        return f"Last.fm request failed (HTTP {status})."
+    return f"Could not reach Last.fm ({type(err).__name__})."
+
 
 if TYPE_CHECKING:
     from music_assistant.controllers.genome.controller import _GenomeStoreProtocol
@@ -76,7 +116,14 @@ class LastfmImporter:
         }
         if from_ts is not None:
             params["from"] = str(from_ts)
-        data = await self._client.get_json(LASTFM_BASE_URL, params=params)
+        try:
+            data = await self._client.get_json(LASTFM_BASE_URL, params=params)
+        except Exception as err:
+            raise LastfmApiError(_describe_fetch_error(err)) from err
+        if not isinstance(data, dict) or "recenttracks" not in data:
+            if isinstance(data, dict) and "error" in data:
+                raise LastfmApiError(_describe_api_error(data))
+            raise LastfmApiError("Last.fm returned an unexpected response; try again in a moment.")
         return self._parse_page(data)
 
     async def import_since(
@@ -114,8 +161,14 @@ class LastfmImporter:
         while page_number <= total_pages:
             try:
                 page = await self.fetch_recent(page_number, from_ts=resume_from or None)
-            except Exception as err:
+            except LastfmApiError as err:
                 LOGGER.warning("Last.fm import: page %d failed: %s", page_number, err)
+                if page_number == 1:
+                    # nothing was imported at all - a silent "0 rows" success would hide a
+                    # bad API key or username from the user, so surface it as a real failure
+                    raise
+                # later-page failure: earlier pages already made it into the store, so treat
+                # this as a partial import rather than discarding what already succeeded
                 result["warnings"].append(f"page {page_number}: {err}")
                 break
             total_pages = page.total_pages or 1

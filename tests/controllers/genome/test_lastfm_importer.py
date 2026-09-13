@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import types
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import pytest
+
+from music_assistant.controllers.genome.errors import LastfmApiError
 from music_assistant.controllers.genome.importers.lastfm import LastfmImporter
 from music_assistant.controllers.genome.store import GenomeStore
 
@@ -12,6 +15,45 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tests.controllers.genome.conftest import FixtureHttpClient
+
+
+class _RaisingHttpClient:
+    """An ``HttpClient`` whose ``get_json`` always raises ``to_raise``."""
+
+    def __init__(self, to_raise: Exception) -> None:
+        self._to_raise = to_raise
+
+    async def get_json(self, url: str, *, params: Any = None, headers: Any = None) -> Any:
+        raise self._to_raise
+
+    async def post_json(self, url: str, *, json: Any, headers: Any = None) -> Any:
+        raise self._to_raise
+
+
+class _StatusError(Exception):
+    """
+    Mimics an aiohttp ``ClientResponseError`` closely enough for these tests.
+
+    Carries a bare status code and nothing else, so a test can prove the importer never
+    needs (or leaks) more.
+    """
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"<url containing the api_key query param>, status={status}")
+        self.status = status
+
+
+class _JsonHttpClient:
+    """An ``HttpClient`` whose ``get_json`` always returns a fixed payload."""
+
+    def __init__(self, payload: Any) -> None:
+        self._payload = payload
+
+    async def get_json(self, url: str, *, params: Any = None, headers: Any = None) -> Any:
+        return self._payload
+
+    async def post_json(self, url: str, *, json: Any, headers: Any = None) -> Any:
+        return self._payload
 
 
 async def _new_store(tmp_path: Path) -> GenomeStore:
@@ -94,5 +136,97 @@ async def test_api_key_never_appears_in_result(
         importer = LastfmImporter(fixture_http_client, "testuser", "super-secret-key")
         result = await importer.import_since(store, listener="household")
         assert "super-secret-key" not in repr(result)
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------------------
+# Network/API failures (§3.8) — a bad key, an unknown user, a timeout or a malformed
+# response must be logged with a readable reason and re-raised, never left to look like a
+# silent "0 rows imported" success.
+# ---------------------------------------------------------------------------------------
+
+
+async def test_bad_api_key_raises_readable_error_without_leaking_the_key(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A 403 (bad API key) must raise a helpful message and never leak the key or the URL."""
+    store = await _new_store(tmp_path)
+    try:
+        client = _RaisingHttpClient(_StatusError(403))
+        importer = LastfmImporter(client, "testuser", "super-secret-key")
+        with caplog.at_level("WARNING"), pytest.raises(LastfmApiError) as excinfo:
+            await importer.import_since(store, listener="household")
+        assert "api key" in str(excinfo.value).lower()
+        assert "super-secret-key" not in str(excinfo.value)
+        assert "super-secret-key" not in caplog.text
+    finally:
+        await store.close()
+
+
+async def test_unknown_user_raises_readable_error(tmp_path: Path) -> None:
+    """A 404 (unknown user) must say to check the username, not leak a raw traceback."""
+    store = await _new_store(tmp_path)
+    try:
+        client = _RaisingHttpClient(_StatusError(404))
+        importer = LastfmImporter(client, "no-such-user", "fake-key")
+        with pytest.raises(LastfmApiError) as excinfo:
+            await importer.import_since(store, listener="household")
+        assert "username" in str(excinfo.value).lower()
+    finally:
+        await store.close()
+
+
+async def test_timeout_raises_readable_error(tmp_path: Path) -> None:
+    """A timeout must raise a readable, retry-suggesting message."""
+    store = await _new_store(tmp_path)
+    try:
+        client = _RaisingHttpClient(TimeoutError())
+        importer = LastfmImporter(client, "testuser", "fake-key")
+        with pytest.raises(LastfmApiError) as excinfo:
+            await importer.import_since(store, listener="household")
+        assert "did not respond" in str(excinfo.value).lower()
+    finally:
+        await store.close()
+
+
+async def test_malformed_json_raises_readable_error(tmp_path: Path) -> None:
+    """A response that is not the expected shape must raise, not silently look like 0 listens."""
+    store = await _new_store(tmp_path)
+    try:
+        client = _JsonHttpClient("<html>not json-shaped</html>")
+        importer = LastfmImporter(client, "testuser", "fake-key")
+        with pytest.raises(LastfmApiError) as excinfo:
+            await importer.import_since(store, listener="household")
+        assert "unexpected response" in str(excinfo.value).lower()
+    finally:
+        await store.close()
+
+
+async def test_lastfm_error_body_raises_readable_error(tmp_path: Path) -> None:
+    """Last.fm's own `{"error": ..., "message": ...}` convention must also be surfaced."""
+    store = await _new_store(tmp_path)
+    try:
+        client = _JsonHttpClient({"error": 10, "message": "Invalid API key"})
+        importer = LastfmImporter(client, "testuser", "fake-key")
+        with pytest.raises(LastfmApiError) as excinfo:
+            await importer.import_since(store, listener="household")
+        assert "invalid api key" in str(excinfo.value).lower()
+        assert "api key" in str(excinfo.value).lower()
+    finally:
+        await store.close()
+
+
+async def test_failure_logged_before_it_propagates(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The failure must actually reach the log, not just the raised exception (the reported bug)."""
+    store = await _new_store(tmp_path)
+    try:
+        client = _RaisingHttpClient(_StatusError(403))
+        importer = LastfmImporter(client, "testuser", "fake-key")
+        with caplog.at_level("WARNING"), pytest.raises(LastfmApiError):
+            await importer.import_since(store, listener="household")
+        assert any("page 1 failed" in record.message for record in caplog.records)
     finally:
         await store.close()
