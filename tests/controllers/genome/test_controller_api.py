@@ -18,10 +18,12 @@ from music_assistant.controllers.genome.constants import (
     CONF_ACTION_REBUILD_NOW,
     CONF_APPLE_IMPORT_DIR,
     CONF_LASTFM_API_KEY,
+    CONF_LASTFM_USERNAME,
     CONF_RECENCY_HALF_LIFE_DAYS,
     LISTENER_HOUSEHOLD,
 )
 from music_assistant.controllers.genome.controller import GenomeController
+from music_assistant.controllers.genome.errors import LastfmNotConfiguredError
 from music_assistant.controllers.genome.models import Listen
 from tests.controllers.genome.conftest import StubGenomeStore
 
@@ -350,3 +352,105 @@ async def test_set_settings_empty_patch_does_not_touch_config(
     genome_controller.mass.config.save_core_config = fake_save_core_config
     await genome_controller.set_settings({})
     assert called is False
+
+
+# ---------------------------------------------------------------------------------------
+# genome/import_lastfm — missing credentials must be logged, not just raised (the reported bug:
+# GenomeController.import_lastfm raised InvalidDataError before any logging happened, so a
+# user-facing failure left nothing in the server log)
+# ---------------------------------------------------------------------------------------
+
+
+async def test_import_lastfm_without_config_raises_and_logs(
+    genome_controller: GenomeController, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test import lastfm without config raises and logs."""
+    with caplog.at_level("WARNING"), pytest.raises(LastfmNotConfiguredError):
+        await genome_controller.import_lastfm()
+    assert any("genome/import_lastfm" in record.message for record in caplog.records)
+
+
+async def test_import_lastfm_without_config_message_says_what_is_missing(
+    genome_controller: GenomeController,
+) -> None:
+    """The error must tell the user what to fix, not just that something is wrong."""
+    with pytest.raises(LastfmNotConfiguredError) as excinfo:
+        await genome_controller.import_lastfm()
+    message = str(excinfo.value).lower()
+    assert "username" in message
+    assert "api key" in message
+
+
+async def test_import_lastfm_with_only_username_reports_missing_api_key(
+    genome_controller: GenomeController,
+) -> None:
+    """Test import lastfm with only username reports missing api key."""
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+            "Bob_Baird" if key == CONF_LASTFM_USERNAME else default
+        )
+    )
+    with pytest.raises(LastfmNotConfiguredError) as excinfo:
+        await genome_controller.import_lastfm()
+    message = str(excinfo.value).lower()
+    assert "api key" in message
+    assert "username is missing" not in message
+
+
+async def test_import_lastfm_unexpected_failure_logged_as_error(
+    genome_controller: GenomeController, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unanticipated failure (a bug, not a user-correctable problem) gets ERROR + traceback."""
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+            "someuser" if key == CONF_LASTFM_USERNAME else "somekey"
+        )
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    genome_controller._lastfm_importer_factory = _boom  # type: ignore[method-assign]
+    with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
+        await genome_controller.import_lastfm()
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert any("genome/import_lastfm" in r.message for r in error_records)
+    assert any(r.exc_info is not None for r in error_records)
+
+
+# ---------------------------------------------------------------------------------------
+# genome/settings/set — the Last.fm API key must be settable the same way every other
+# setting is, and genome/settings must still never echo it back (§3.3)
+# ---------------------------------------------------------------------------------------
+
+
+async def test_set_settings_can_set_lastfm_api_key(genome_controller: GenomeController) -> None:
+    """Test set settings can set lastfm api key."""
+    saved: dict[str, object] = {}
+
+    async def fake_save_core_config(_domain: str, values: dict[str, object]) -> None:
+        saved.update(values)
+
+    genome_controller.mass.config.save_core_config = fake_save_core_config
+    await genome_controller.set_settings({"lastfm_api_key": "super-secret-key"})
+    assert saved[CONF_LASTFM_API_KEY] == "super-secret-key"
+
+
+async def test_get_settings_still_redacts_a_freshly_set_api_key(
+    genome_controller: GenomeController,
+) -> None:
+    """A key just written through set_settings must still never come back from get_settings."""
+    saved: dict[str, object] = {}
+
+    async def fake_save_core_config(_domain: str, values: dict[str, object]) -> None:
+        saved.update(values)
+
+    genome_controller.mass.config.save_core_config = fake_save_core_config
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: saved.get(key, default)  # noqa: ARG005
+    )
+    settings = await genome_controller.set_settings({"lastfm_api_key": "super-secret-key"})
+    assert "lastfm_api_key" not in settings
+    assert "super-secret-key" not in repr(settings)
+    assert settings["lastfm_configured"] is True

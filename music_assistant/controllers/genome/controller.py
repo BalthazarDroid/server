@@ -17,8 +17,9 @@ import contextlib
 import os
 import time
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, ParamSpec, Protocol, TypeVar, cast
 
 from music_assistant_models.auth import Scope
 from music_assistant_models.config_entries import ConfigActionResult, ConfigEntry
@@ -66,6 +67,7 @@ from .constants import (
     SOURCE_APPLE_EXPORT,
 )
 from .engine import build_genome
+from .errors import LastfmNotConfiguredError
 from .models import (
     EngineParams,
     GenomeImportResult,
@@ -81,7 +83,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Sequence
+    from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
 
     from music_assistant_models.config_entries import ConfigValueType, CoreConfig
 
@@ -89,6 +91,49 @@ if TYPE_CHECKING:
 
     from .importers.apple_csv import ApplePlayActivityStats
     from .models import ArtistMeta, Baseline, Listen
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _log_command_errors(
+    command: str,
+) -> Callable[[Callable[_P, Coroutine[Any, Any, _R]]], Callable[_P, Coroutine[Any, Any, _R]]]:
+    """
+    Ensure a user-facing API-command failure is always logged before it propagates.
+
+    Every ``@api_command`` on this controller gets one of these: the bug that prompted it was
+    an ``InvalidDataError`` guard (missing Last.fm credentials) raised with nothing logged
+    first, so the failure reached the user as a popup while the server log stayed silent.
+    A single decorator here covers every current and future raise site in the command's whole
+    call graph, instead of a try/except repeated at each one.
+
+    :param command: The API command name (e.g. ``"genome/import_lastfm"``), used only to label
+        the log line.
+    """
+
+    def decorate(
+        func: Callable[_P, Coroutine[Any, Any, _R]],
+    ) -> Callable[_P, Coroutine[Any, Any, _R]]:
+        @wraps(func)
+        async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            try:
+                return await func(*args, **kwargs)
+            except InvalidDataError as err:
+                # user-correctable (bad/missing input, missing config): the message already
+                # says what to fix, so a traceback would only add noise
+                LOGGER.warning("%s: %s", command, err)
+                raise
+            except Exception:
+                # anything else is a bug or an infra problem nobody anticipated; the traceback
+                # is the only way to diagnose it later, since the caller only ever sees str(exc)
+                LOGGER.error("%s failed unexpectedly", command, exc_info=True)
+                raise
+
+        return wrapper
+
+    return decorate
 
 
 class _GenomeStoreProtocol(Protocol):
@@ -337,6 +382,7 @@ class GenomeController(CoreController):
             self._register_lastfm_poll_task()
 
     @api_command("genome/get", required_scope=Scope.LIBRARY_READ)
+    @_log_command_errors("genome/get")
     async def get_genome(
         self, listener: str = LISTENER_HOUSEHOLD, refresh: bool = False
     ) -> GenomeResult:
@@ -359,6 +405,7 @@ class GenomeController(CoreController):
         return (await self._rebuild(listener))["genome"]
 
     @api_command("genome/rebuild", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/rebuild")
     async def rebuild(
         self, listener: str = LISTENER_HOUSEHOLD, enrich: bool = True
     ) -> GenomeRebuildResult:
@@ -371,6 +418,7 @@ class GenomeController(CoreController):
         return await self._rebuild(listener, enrich=enrich)
 
     @api_command("genome/import_apple", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/import_apple")
     async def import_apple(
         self,
         upload_id: str,
@@ -418,6 +466,7 @@ class GenomeController(CoreController):
         return result
 
     @api_command("genome/import_lastfm", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/import_lastfm")
     async def import_lastfm(self, username: str = "", max_pages: int = 0) -> GenomeImportResult:
         """
         Poll Last.fm's ``user.getRecentTracks`` and ingest the result (§3.3, §3.8).
@@ -432,8 +481,16 @@ class GenomeController(CoreController):
             CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
         )
         if not username or not api_key:
-            msg = "Last.fm is not configured (username and API key are required)"
-            raise InvalidDataError(msg)
+            missing = " and ".join(
+                part
+                for part, present in (("username", bool(username)), ("API key", bool(api_key)))
+                if not present
+            )
+            msg = (
+                f"Last.fm is not configured: the {missing} is missing. Add it on the "
+                "Listening Genome import page, then try again."
+            )
+            raise LastfmNotConfiguredError(msg)
         importer = self._lastfm_importer_factory(self.mass, username=username, api_key=api_key)
         return cast(
             "GenomeImportResult",
@@ -443,6 +500,7 @@ class GenomeController(CoreController):
         )
 
     @api_command("genome/settings", required_scope=Scope.LIBRARY_READ)
+    @_log_command_errors("genome/settings")
     async def get_settings(self) -> GenomeSettings:
         """Return the current genome settings (§3.3). Never includes the Last.fm API key."""
         api_key = self.get_config_value(
@@ -476,6 +534,7 @@ class GenomeController(CoreController):
         )
 
     @api_command("genome/settings/set", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/settings/set")
     async def set_settings(self, settings: GenomeSettingsPatch) -> GenomeSettings:
         """
         Apply a partial settings update and return the resulting settings (§3.3).
@@ -578,10 +637,15 @@ class GenomeController(CoreController):
         """Scheduled-task entry point: poll Last.fm for new scrobbles."""
         try:
             result = await self.import_lastfm()
-        except InvalidDataError:
+        except LastfmNotConfiguredError:
             # config raced out from under an in-flight scheduled run; the next re-registration
             # (triggered by update_config) already handles unregistering the task itself
             LOGGER.debug("Skipping scheduled Last.fm poll: not configured")
+            return
+        except InvalidDataError:
+            # a real Last.fm/network failure (bad key, unknown user, timeout, ...) - already
+            # logged by _log_command_errors via import_lastfm; a background poll must not crash
+            # the task loop over it, the next scheduled run tries again on its own
             return
         LOGGER.info(
             "Scheduled Last.fm poll: %d rows added, %d skipped, %d duplicate",
@@ -704,7 +768,7 @@ class GenomeController(CoreController):
                         list(mbid_by_key.values()), client=lb_client
                     )
                 except Exception:
-                    LOGGER.debug("ListenBrainz popularity lookup failed", exc_info=True)
+                    LOGGER.warning("ListenBrainz popularity lookup failed", exc_info=True)
                 else:
                     updates = {
                         artist_key: (pop.listeners, pop.listen_count)
