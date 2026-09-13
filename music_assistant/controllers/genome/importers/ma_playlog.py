@@ -61,7 +61,9 @@ class MaPlaylogImporter:
 
     def attach(self) -> Callable[[], None]:
         """Subscribe to ``EventType.PLAYLOG_UPDATED`` and return the unsubscribe callable."""
-        return self.mass.subscribe(self._on_playlog, EventType.PLAYLOG_UPDATED)
+        unsubscribe = self.mass.subscribe(self._on_playlog, EventType.PLAYLOG_UPDATED)
+        LOGGER.info("Live playlog capture attached (EventType.PLAYLOG_UPDATED)")
+        return unsubscribe
 
     async def backfill(self, *, min_seconds_played: int = 30) -> GenomeImportResult:
         """
@@ -76,6 +78,7 @@ class MaPlaylogImporter:
         :param min_seconds_played: A playlog row must be fully played or clear this many seconds
             to count (mirrors §3.2 ``min_seconds_played``).
         """
+        LOGGER.info("One-time MA playlog/tracks backfill starting")
         result: GenomeImportResult = {
             "source": SOURCE_MA_BACKFILL,
             "rows_read": 0,
@@ -164,6 +167,14 @@ class MaPlaylogImporter:
             result["rows_duplicate"] = store_result["rows_duplicate"]
             result["first_played_at"] = store_result["first_played_at"]
             result["last_played_at"] = store_result["last_played_at"]
+        LOGGER.info(
+            "One-time MA playlog/tracks backfill finished: %d rows read, %d imported, "
+            "%d skipped, %d duplicate",
+            result["rows_read"],
+            result["rows_imported"],
+            result["rows_skipped"],
+            result["rows_duplicate"],
+        )
         return result
 
     async def _on_playlog(self, event: MassEvent) -> None:
@@ -208,6 +219,7 @@ class MaPlaylogImporter:
             confidence=1.0,
         )
         await self.store.add_listens([listen], listener=LISTENER_HOUSEHOLD, ma_userid=update.userid)
+        LOGGER.debug("Captured live listen: %s - %s", artist_name, track.name)
 
 
 def _primary_artist_name(artists_json: Any) -> str:

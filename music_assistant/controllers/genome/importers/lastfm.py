@@ -18,6 +18,7 @@ from music_assistant.controllers.genome.constants import (
     LASTFM_BASE_URL,
     LASTFM_INTER_PAGE_DELAY_SECONDS,
     LASTFM_PAGE_LIMIT,
+    LOGGER,
     SOURCE_LASTFM,
 )
 from music_assistant.controllers.genome.models import GenomeImportResult, Listen
@@ -93,6 +94,11 @@ class LastfmImporter:
         :param max_pages: Stop after this many pages; ``0`` means no limit.
         """
         resume_from = await self._resume_timestamp(store, listener)
+        LOGGER.info(
+            "Last.fm import starting for %s (resuming from %s)",
+            self._username,
+            resume_from or "the beginning",
+        )
         result: GenomeImportResult = {
             "source": SOURCE_LASTFM,
             "rows_read": 0,
@@ -109,9 +115,16 @@ class LastfmImporter:
             try:
                 page = await self.fetch_recent(page_number, from_ts=resume_from or None)
             except Exception as err:
+                LOGGER.warning("Last.fm import: page %d failed: %s", page_number, err)
                 result["warnings"].append(f"page {page_number}: {err}")
                 break
             total_pages = page.total_pages or 1
+            LOGGER.debug(
+                "Last.fm import: fetched page %d/%d (%d tracks)",
+                page_number,
+                total_pages,
+                page.raw_count,
+            )
             result["rows_read"] += page.raw_count
             result["rows_skipped"] += page.raw_count - len(page.listens)
             if page.listens:
@@ -134,6 +147,15 @@ class LastfmImporter:
                 break
             if page_number <= total_pages:
                 await asyncio.sleep(LASTFM_INTER_PAGE_DELAY_SECONDS)
+        LOGGER.info(
+            "Last.fm import finished for %s: %d pages fetched, %d rows added, %d skipped, "
+            "%d duplicate",
+            self._username,
+            page_number - 1,
+            result["rows_imported"],
+            result["rows_skipped"],
+            result["rows_duplicate"],
+        )
         return result
 
     async def _resume_timestamp(self, store: _GenomeStoreProtocol, listener: str) -> int:

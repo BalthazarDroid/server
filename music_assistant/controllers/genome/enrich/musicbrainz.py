@@ -125,8 +125,12 @@ async def enrich_pending_artists(
     :param limit: The maximum number of artists to resolve in this pass.
     :return: The number of artists successfully resolved (``resolve_state="ok"``).
     """
+    pending = await store.pending_artist_keys(limit=limit)
+    if not pending:
+        return 0
+    LOGGER.info("MusicBrainz enrichment pass starting: %d pending artists", len(pending))
     resolved = 0
-    for artist_key, artist_name in await store.pending_artist_keys(limit=limit):
+    for artist_key, artist_name in pending:
         try:
             update = await resolve_artist(artist_name, client=client, mass=mass)
         except Exception as err:
@@ -157,6 +161,9 @@ async def enrich_pending_artists(
             state=RESOLVE_STATE_OK,
         )
         resolved += 1
+    LOGGER.info(
+        "MusicBrainz enrichment pass finished: %d/%d artists resolved", resolved, len(pending)
+    )
     return resolved
 
 
