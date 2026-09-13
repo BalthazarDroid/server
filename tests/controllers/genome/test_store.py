@@ -183,3 +183,16 @@ async def test_iter_listens_respects_since(tmp_path: Path) -> None:
         assert collected[0].played_at == 1_800_000_000
     finally:
         await store.close()
+
+
+async def test_lastfm_backfill_done_defaults_false_and_persists(tmp_path: Path) -> None:
+    """The one-time Last.fm sweep flag (§3.1 `settings` table, P1) starts false and sticks."""
+    store = await _new_store(tmp_path)
+    try:
+        assert await store.lastfm_backfill_done() is False
+        await store.mark_lastfm_backfill_done()
+        assert await store.lastfm_backfill_done() is True
+        # independent of the (also settings-table-backed) MA playlog backfill flag
+        assert await store.backfill_done() is False
+    finally:
+        await store.close()

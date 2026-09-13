@@ -109,6 +109,15 @@ LASTFM_API_KEY_PATTERN: Final[str] = r"^[0-9a-fA-F]{32}$"
 LASTFM_PAGE_LIMIT: Final[int] = 200
 LASTFM_INTER_PAGE_DELAY_SECONDS: Final[float] = 0.25
 
+# A page fetch that fails with a transient status (429/500/502/503/504) or a network-level
+# error (no status at all - a timeout, a dropped connection) is retried this many times with
+# exponential backoff before the page is treated as failed (P2, 2026-09-13 real-hardware run:
+# a single 500 on page 62/275 killed the whole import). 401/403/404 are permanent and never
+# retried - see ``importers/lastfm.py::_PERMANENT_STATUS_CODES``.
+LASTFM_RETRY_MAX_ATTEMPTS: Final[int] = 4
+LASTFM_RETRY_BASE_DELAY_SECONDS: Final[float] = 0.5
+LASTFM_RETRY_MAX_DELAY_SECONDS: Final[float] = 8.0
+
 # --- ListenBrainz popularity (§3.8) ---------------------------------------------------
 
 LISTENBRAINZ_POPULARITY_URL: Final[str] = "https://api.listenbrainz.org/1/popularity/artist"

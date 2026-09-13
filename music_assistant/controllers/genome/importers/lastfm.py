@@ -9,6 +9,7 @@ timestamp so a scheduled poll only fetches what is new.
 from __future__ import annotations
 
 import asyncio
+import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -18,12 +19,23 @@ from music_assistant.controllers.genome.constants import (
     LASTFM_BASE_URL,
     LASTFM_INTER_PAGE_DELAY_SECONDS,
     LASTFM_PAGE_LIMIT,
+    LASTFM_RETRY_BASE_DELAY_SECONDS,
+    LASTFM_RETRY_MAX_ATTEMPTS,
+    LASTFM_RETRY_MAX_DELAY_SECONDS,
     LOGGER,
     SOURCE_LASTFM,
 )
 from music_assistant.controllers.genome.errors import LastfmApiError
 from music_assistant.controllers.genome.models import GenomeImportResult, Listen
 from music_assistant.helpers.util import parse_title_and_version
+
+# A 429/500/502/503/504 is Last.fm (or the network between us and it) having a bad moment, not
+# a reason to give up on the whole import - retried with backoff (P2). A network-level failure
+# with no HTTP status at all (timeout, dropped connection) is treated the same way.
+_TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# A bad API key or an unknown username can never succeed on retry - fail fast instead of
+# burning through the retry budget for nothing.
+_PERMANENT_STATUS_CODES = frozenset({401, 403, 404})
 
 # Last.fm's own `format=json` error convention: a 200 response whose body is
 # `{"error": <code>, "message": "..."}` rather than a `recenttracks` payload. Codes worth a
@@ -116,10 +128,7 @@ class LastfmImporter:
         }
         if from_ts is not None:
             params["from"] = str(from_ts)
-        try:
-            data = await self._client.get_json(LASTFM_BASE_URL, params=params)
-        except Exception as err:
-            raise LastfmApiError(_describe_fetch_error(err)) from err
+        data = await self._fetch_with_retry(page, params)
         if not isinstance(data, dict) or "recenttracks" not in data:
             if isinstance(data, dict) and "error" in data:
                 raise LastfmApiError(_describe_api_error(data))
@@ -130,21 +139,43 @@ class LastfmImporter:
         self, store: _GenomeStoreProtocol, *, listener: str, max_pages: int = 0
     ) -> GenomeImportResult:
         """
-        Import every scrobble newer than the most recently stored Last.fm listen.
+        Import Last.fm history, in one of two explicit modes (§3.8, P1).
 
-        Pages from the most recent scrobble backwards (Last.fm's default order) and stops once a
-        page contains nothing newer than the resume point, or ``max_pages`` is reached.
+        **Backfill mode** - the one-time full-history sweep
+        (:meth:`~music_assistant.controllers.genome.store.GenomeStore.lastfm_backfill_done`)
+        has never completed: pages from page 1 through the last page with **no** ``from_ts`` at
+        all, so an interrupted first sweep can always be resumed by simply running the import
+        again - the store's existing ``dedupe_key`` uniqueness absorbs whatever a prior partial
+        run already imported, and the sweep continues past however far it previously got.
+        Backfill completion is recorded only when the sweep actually reaches the last page, in
+        the ``settings`` table (no schema change, no migration - see ``store.py``).
 
-        :param store: The ``GenomeStore``-shaped object to read the resume point from and write
-            into.
+        **Incremental mode** - backfill has completed at least once: resumes from the newest
+        stored Last.fm timestamp, exactly as before, so a scheduled poll only fetches what is
+        new.
+
+        A page-1 failure (in either mode) still raises - nothing was imported yet, so a silent
+        "0 rows" success would hide a bad API key or username. A later-page failure (after
+        retries are exhausted - see :meth:`_fetch_with_retry`) returns a partial result instead:
+        earlier pages already made it into the store, and - critically - backfill is *not*
+        marked complete, so the next run resumes the sweep rather than switching to incremental
+        mode and leaving the remaining history unreachable forever (the bug this fixes: a
+        real-hardware import that hit a transient 500 on page 62/275 could never make progress
+        past that point, because the old code always resumed from the newest stored timestamp).
+
+        :param store: The ``GenomeStore``-shaped object to read the resume point/backfill state
+            from and write into.
         :param listener: The listener partition to attribute these listens to.
-        :param max_pages: Stop after this many pages; ``0`` means no limit.
+        :param max_pages: Stop after this many pages; ``0`` means no limit. An explicit limit is
+            always treated as an intentionally partial run - it never marks backfill complete.
         """
-        resume_from = await self._resume_timestamp(store, listener)
+        backfilled = await store.lastfm_backfill_done()
+        resume_from = await self._resume_timestamp(store, listener) if backfilled else None
         LOGGER.info(
-            "Last.fm import starting for %s (resuming from %s)",
+            "Last.fm import starting for %s (mode=%s%s)",
             self._username,
-            resume_from or "the beginning",
+            "incremental" if backfilled else "backfill",
+            f", resuming from {resume_from}" if resume_from else "",
         )
         result: GenomeImportResult = {
             "source": SOURCE_LASTFM,
@@ -158,18 +189,25 @@ class LastfmImporter:
         }
         page_number = 1
         total_pages = 1
+        swept_fully = False
         while page_number <= total_pages:
             try:
-                page = await self.fetch_recent(page_number, from_ts=resume_from or None)
+                page = await self.fetch_recent(page_number, from_ts=resume_from)
             except LastfmApiError as err:
                 LOGGER.warning("Last.fm import: page %d failed: %s", page_number, err)
                 if page_number == 1:
                     # nothing was imported at all - a silent "0 rows" success would hide a
                     # bad API key or username from the user, so surface it as a real failure
                     raise
-                # later-page failure: earlier pages already made it into the store, so treat
-                # this as a partial import rather than discarding what already succeeded
+                # later-page failure, retries already exhausted: earlier pages already made it
+                # into the store, so treat this as a partial import rather than discarding what
+                # already succeeded - and never mark backfill complete over an incomplete sweep
                 result["warnings"].append(f"page {page_number}: {err}")
+                if not backfilled:
+                    result["warnings"].append(
+                        f"Import stopped at page {page_number}/{total_pages}; run it again "
+                        "later to continue the full-history sweep from where it left off."
+                    )
                 break
             total_pages = page.total_pages or 1
             LOGGER.debug(
@@ -200,6 +238,13 @@ class LastfmImporter:
                 break
             if page_number <= total_pages:
                 await asyncio.sleep(LASTFM_INTER_PAGE_DELAY_SECONDS)
+        else:
+            # the `while` condition went false on its own (no `break` above) - the sweep ran
+            # all the way to the last page without an unresolved failure or an artificial cap
+            swept_fully = True
+        if not backfilled and swept_fully:
+            await store.mark_lastfm_backfill_done()
+            LOGGER.info("Last.fm full-history backfill complete for %s", self._username)
         LOGGER.info(
             "Last.fm import finished for %s: %d pages fetched, %d rows added, %d skipped, "
             "%d duplicate",
@@ -210,6 +255,50 @@ class LastfmImporter:
             result["rows_duplicate"],
         )
         return result
+
+    async def _fetch_with_retry(self, page: int, params: dict[str, str]) -> Any:
+        """
+        Issue the request, retrying transient failures with capped exponential backoff (§3.8, P2).
+
+        A permanent failure (401/403/404 - a bad key or an unknown user) is raised immediately,
+        never retried. Anything else - a transient HTTP status (429/500/502/503/504) or a
+        network-level error with no HTTP status at all (a timeout, a dropped connection) - is
+        retried up to :data:`LASTFM_RETRY_MAX_ATTEMPTS` times before giving up.
+
+        :param page: The page number being fetched, used only to label log lines.
+        :param params: The request's query parameters (already includes the API key).
+        """
+        delay = LASTFM_RETRY_BASE_DELAY_SECONDS
+        last_err: Exception | None = None
+        for attempt in range(1, LASTFM_RETRY_MAX_ATTEMPTS + 1):
+            try:
+                return await self._client.get_json(LASTFM_BASE_URL, params=params)
+            except Exception as err:
+                status = getattr(err, "status", None)
+                if status in _PERMANENT_STATUS_CODES:
+                    raise LastfmApiError(_describe_fetch_error(err)) from err
+                last_err = err
+                transient = status is None or status in _TRANSIENT_STATUS_CODES
+                if not transient or attempt == LASTFM_RETRY_MAX_ATTEMPTS:
+                    break
+                LOGGER.debug(
+                    "Last.fm page %d: attempt %d/%d failed (status=%s), retrying in %.1fs",
+                    page,
+                    attempt,
+                    LASTFM_RETRY_MAX_ATTEMPTS,
+                    status,
+                    delay,
+                )
+                await asyncio.sleep(delay * random.uniform(0.85, 1.15))
+                delay = min(delay * 2, LASTFM_RETRY_MAX_DELAY_SECONDS)
+        assert last_err is not None  # the loop only exits without returning via `break` above
+        LOGGER.warning(
+            "Last.fm page %d: giving up after %d attempt(s): %s",
+            page,
+            LASTFM_RETRY_MAX_ATTEMPTS,
+            _describe_fetch_error(last_err),
+        )
+        raise LastfmApiError(_describe_fetch_error(last_err)) from last_err
 
     async def _resume_timestamp(self, store: _GenomeStoreProtocol, listener: str) -> int:
         """Return the newest stored Last.fm ``played_at`` for ``listener``, or ``0``."""

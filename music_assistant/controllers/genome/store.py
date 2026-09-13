@@ -65,6 +65,11 @@ _GENOME_CACHE_TTL_SECONDS = 0  # 0 = no expiry; cache is invalidated explicitly 
 # settings-table key recording whether the one-time MA playlog backfill has already run
 _MA_BACKFILL_DONE_KEY = "ma_backfill_done"
 
+# settings-table key recording whether the one-time Last.fm full-history sweep has completed
+# (P1, 2026-09-13 real-hardware run). Reuses the existing `settings` table exactly like
+# `_MA_BACKFILL_DONE_KEY` above - no schema change, no migration, no risk to imported rows.
+_LASTFM_BACKFILL_DONE_KEY = "lastfm_backfill_done"
+
 
 class ArtistMetaWrite(TypedDict, total=False):
     """
@@ -434,6 +439,20 @@ class GenomeStore:
         assert self.database is not None
         await self.database.insert_or_replace(
             DB_TABLE_SETTINGS, {"key": _MA_BACKFILL_DONE_KEY, "value": "1", "type": "str"}
+        )
+        await self.database.commit()
+
+    async def lastfm_backfill_done(self) -> bool:
+        """Return whether the one-time Last.fm full-history sweep has already completed (P1)."""
+        assert self.database is not None
+        row = await self.database.get_row(DB_TABLE_SETTINGS, {"key": _LASTFM_BACKFILL_DONE_KEY})
+        return row is not None and row["value"] == "1"
+
+    async def mark_lastfm_backfill_done(self) -> None:
+        """Record that the one-time Last.fm full-history sweep has completed (P1)."""
+        assert self.database is not None
+        await self.database.insert_or_replace(
+            DB_TABLE_SETTINGS, {"key": _LASTFM_BACKFILL_DONE_KEY, "value": "1", "type": "str"}
         )
         await self.database.commit()
 

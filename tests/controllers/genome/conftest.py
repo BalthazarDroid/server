@@ -198,6 +198,13 @@ class StubGenomeStore:
     async def mark_backfill_done(self) -> None:
         """No-op: nothing to persist in the stub."""
 
+    async def lastfm_backfill_done(self) -> bool:
+        """Report the one-time Last.fm sweep as already done by default (incremental mode)."""
+        return True
+
+    async def mark_lastfm_backfill_done(self) -> None:
+        """No-op: nothing to persist in the stub."""
+
 
 @pytest.fixture
 def genome_store() -> StubGenomeStore:
