@@ -72,6 +72,11 @@ from .models import (
     GenomeRebuildResult,
     GenomeResult,
     GenomeSettings,
+    # NOTE: every name used in an @api_command signature must be imported at RUNTIME, not
+    # under TYPE_CHECKING. Music Assistant resolves handler annotations with get_type_hints()
+    # when it registers the command, and its NameError fallback only searches
+    # music_assistant_models — it cannot see this package's own types.
+    GenomeSettingsPatch,
 )
 
 if TYPE_CHECKING:
@@ -81,7 +86,7 @@ if TYPE_CHECKING:
 
     from music_assistant.mass import MusicAssistant
 
-    from .models import ArtistMeta, Baseline, GenomeSettingsPatch, Listen
+    from .models import ArtistMeta, Baseline, Listen
 
 
 class _GenomeStoreProtocol(Protocol):
