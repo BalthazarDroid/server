@@ -24,7 +24,7 @@ from music_assistant.controllers.genome.constants import (
 )
 from music_assistant.controllers.genome.controller import GenomeController
 from music_assistant.controllers.genome.errors import LastfmNotConfiguredError
-from music_assistant.controllers.genome.models import Listen
+from music_assistant.controllers.genome.models import GenomeImportResult, Listen
 from tests.controllers.genome.conftest import StubGenomeStore
 
 CSV_CHUNK_1 = base64.b64encode(b"Song Name,Artist Name,Event Start Timestamp\n").decode()
@@ -403,7 +403,9 @@ async def test_import_lastfm_unexpected_failure_logged_as_error(
     """An unanticipated failure (a bug, not a user-correctable problem) gets ERROR + traceback."""
     genome_controller.get_config_value = (  # type: ignore[method-assign]
         lambda key, default=None, *, return_type=None: (  # noqa: ARG005
-            "someuser" if key == CONF_LASTFM_USERNAME else "somekey"
+            # a well-formed (if fake) 32-hex key, so this test exercises the failure path it
+            # is actually about rather than tripping the API-key format guard first
+            "someuser" if key == CONF_LASTFM_USERNAME else "0" * 32
         )
     )
 
@@ -454,3 +456,64 @@ async def test_get_settings_still_redacts_a_freshly_set_api_key(
     assert "lastfm_api_key" not in settings
     assert "super-secret-key" not in repr(settings)
     assert settings["lastfm_configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_import_lastfm_rejects_malformed_api_key(
+    genome_controller: GenomeController,
+) -> None:
+    """
+    A mis-pasted API key fails locally, with a message that names the real problem.
+
+    Regression test for a real incident: a URL was pasted into the API-key field, went out as a
+    query parameter, and came back as an opaque `403 Forbidden` whose error text embedded the
+    whole request URL. Validating the shape here means no network call and no secret in flight.
+    """
+    values = {
+        CONF_LASTFM_USERNAME: "Bob_Baird",
+        CONF_LASTFM_API_KEY: " http://192.168.4.11:8095/setup",
+    }
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, **_kw: values.get(key, default)
+    )
+    with pytest.raises(LastfmNotConfiguredError) as excinfo:
+        await genome_controller.import_lastfm()
+    message = str(excinfo.value)
+    assert "32 hex characters" in message
+    # the key must never be echoed back, only its length
+    assert "192.168.4.11" not in message
+    assert "setup" not in message
+
+
+@pytest.mark.asyncio
+async def test_import_lastfm_accepts_a_well_formed_key_with_whitespace(
+    genome_controller: GenomeController,
+) -> None:
+    """A key that is valid apart from stray copy-paste whitespace is accepted and trimmed."""
+    key = "a" * 32
+    values = {CONF_LASTFM_USERNAME: "Bob_Baird", CONF_LASTFM_API_KEY: f"  {key}\n"}
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda k, default=None, **_kw: values.get(k, default)
+    )
+    captured: dict[str, str] = {}
+
+    def _factory(_mass: object, *, username: str, api_key: str) -> object:
+        captured["api_key"] = api_key
+        captured["username"] = username
+
+        class _Importer:
+            async def import_since(self, _store: object, **_kw: object) -> GenomeImportResult:
+                return GenomeImportResult(
+                    source="lastfm",
+                    rows_read=0,
+                    rows_added=0,
+                    rows_duplicate=0,
+                    rows_skipped=0,
+                    warnings=[],
+                )
+
+        return _Importer()
+
+    genome_controller._lastfm_importer_factory = _factory  # type: ignore[assignment]
+    await genome_controller.import_lastfm()
+    assert captured["api_key"] == key

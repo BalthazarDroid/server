@@ -101,6 +101,11 @@ GENOME_UPLOAD_TTL_SECONDS: Final[int] = 15 * 60
 # --- Last.fm polling (§3.8) -----------------------------------------------------------
 
 LASTFM_BASE_URL: Final[str] = "https://ws.audioscrobbler.com/2.0/"
+# A Last.fm API key is a 32-character hex string. Validating the shape locally turns a
+# mis-pasted value (a URL, a stray password-manager entry, a truncated copy) into an immediate,
+# specific error instead of an opaque 403 from Last.fm — and keeps a bad value from ever being
+# sent over the wire as a query parameter.
+LASTFM_API_KEY_PATTERN: Final[str] = r"^[0-9a-fA-F]{32}$"
 LASTFM_PAGE_LIMIT: Final[int] = 200
 LASTFM_INTER_PAGE_DELAY_SECONDS: Final[float] = 0.25
 

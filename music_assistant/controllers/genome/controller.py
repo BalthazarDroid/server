@@ -15,6 +15,7 @@ import asyncio
 import base64
 import contextlib
 import os
+import re
 import time
 from datetime import datetime
 from functools import wraps
@@ -62,6 +63,7 @@ from .constants import (
     GENOME_UPLOAD_MAX_TOTAL_BYTES,
     GENOME_UPLOAD_TTL_SECONDS,
     GENOME_UPLOADS_DIRNAME,
+    LASTFM_API_KEY_PATTERN,
     LISTENER_HOUSEHOLD,
     LOGGER,
     SOURCE_APPLE_EXPORT,
@@ -491,6 +493,17 @@ class GenomeController(CoreController):
                 "Listening Genome import page, then try again."
             )
             raise LastfmNotConfiguredError(msg)
+        if not re.match(LASTFM_API_KEY_PATTERN, api_key.strip()):
+            # Catches a mis-pasted key (a URL, a truncated copy) here rather than letting it go
+            # out as a query parameter and come back as an opaque 403. The key itself is never
+            # echoed — only its length, which is enough to diagnose without leaking a secret.
+            msg = (
+                f"The configured Last.fm API key does not look like a key "
+                f"(expected 32 hex characters, got {len(api_key.strip())}). "
+                "Copy it from https://www.last.fm/api/accounts and save it again."
+            )
+            raise LastfmNotConfiguredError(msg)
+        api_key = api_key.strip()
         importer = self._lastfm_importer_factory(self.mass, username=username, api_key=api_key)
         return cast(
             "GenomeImportResult",
