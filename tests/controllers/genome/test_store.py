@@ -5,6 +5,7 @@ from __future__ import annotations
 import types
 from typing import TYPE_CHECKING
 
+from music_assistant.controllers.genome.constants import GENOME_RESULT_SCHEMA_VERSION
 from music_assistant.controllers.genome.models import Listen
 from music_assistant.controllers.genome.store import ArtistMetaWrite, GenomeStore
 
@@ -143,9 +144,43 @@ async def test_cached_genome_roundtrip(tmp_path: Path) -> None:
     store = await _new_store(tmp_path)
     try:
         assert await store.get_cached_genome("household") is None
-        payload = {"schema_version": 1, "stats": {"total_listens": 0}}
+        payload = {
+            "schema_version": GENOME_RESULT_SCHEMA_VERSION,
+            "stats": {"total_listens": 0},
+        }
         await store.set_cached_genome("household", payload)  # type: ignore[arg-type]
         assert await store.get_cached_genome("household") == payload
+    finally:
+        await store.close()
+
+
+async def test_cached_genome_from_older_result_schema_is_discarded(tmp_path: Path) -> None:
+    """
+    A cached blob from an older result shape is dropped, not served.
+
+    Regression: `bases`/`base_mix` were added to GenomeResult without the cache key
+    changing, so `genome/get` kept serving pre-`bases` blobs. The frontend reads those
+    fields unconditionally, and the missing key took the whole molecule card down with
+    no server-side error to show for it.
+    """
+    store = await _new_store(tmp_path)
+    try:
+        stale = {
+            "schema_version": GENOME_RESULT_SCHEMA_VERSION - 1,
+            "stats": {"total_listens": 5},
+        }
+        await store.set_cached_genome("household", stale)  # type: ignore[arg-type]
+        assert await store.get_cached_genome("household") is None
+    finally:
+        await store.close()
+
+
+async def test_cached_genome_without_schema_version_is_discarded(tmp_path: Path) -> None:
+    """A cache entry predating result versioning has no recorded shape, so it is dropped."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.set_cached_genome("household", {"stats": {}})  # type: ignore[arg-type]
+        assert await store.get_cached_genome("household") is None
     finally:
         await store.close()
 

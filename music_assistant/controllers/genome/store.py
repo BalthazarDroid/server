@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from music_assistant.controllers.genome.constants import (
     DB_SCHEMA_VERSION,
@@ -27,6 +27,7 @@ from music_assistant.controllers.genome.constants import (
     DB_TABLE_GENOME_LISTENS,
     DB_TABLE_SETTINGS,
     ENGINE_VERSION,
+    GENOME_RESULT_SCHEMA_VERSION,
     LOGGER,
     RESOLVE_NOT_FOUND_COOLDOWN_DAYS,
     RESOLVE_OK_COOLDOWN_DAYS,
@@ -334,7 +335,20 @@ class GenomeStore:
         except Exception as err:  # pragma: no cover - defensive, malformed cache row
             LOGGER.warning("Discarding malformed genome cache entry: %s", err)
             return None
-        return data  # type: ignore[no-any-return]
+        # A cached blob written by an older result shape is not merely stale, it is the
+        # wrong shape: a field added since (`bases`, `base_mix`) is simply absent, and the
+        # frontend reads it unconditionally. The cache key carries ENGINE_VERSION, but the
+        # result shape can change without the engine's maths changing, so check the blob's
+        # own recorded schema version rather than relying on someone remembering to bump
+        # the key.
+        if not isinstance(data, dict) or data.get("schema_version") != GENOME_RESULT_SCHEMA_VERSION:
+            LOGGER.info(
+                "Discarding genome cache entry from result schema %s (current: %s)",
+                data.get("schema_version") if isinstance(data, dict) else "unknown",
+                GENOME_RESULT_SCHEMA_VERSION,
+            )
+            return None
+        return cast("GenomeResult", data)
 
     async def set_cached_genome(self, listener: str, genome: GenomeResult) -> None:
         """Store ``genome`` as the cached result for ``listener``."""
