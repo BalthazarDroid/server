@@ -418,6 +418,8 @@ class GenomeController(CoreController):
                 if current_count == cached["stats"]["total_listens"]:
                     return cached
                 return cast("GenomeResult", {**cached, "stale": True})
+        # Never enrich on a read: a page load must return what we already know. Resolving
+        # artists means MusicBrainz, which is rate-limited in minutes, not milliseconds.
         return (await self._rebuild(listener))["genome"]
 
     @api_command("genome/rebuild", required_scope=Scope.LIBRARY_MANAGE)
@@ -428,10 +430,21 @@ class GenomeController(CoreController):
         """
         Recompute and cache the genome for ``listener`` (§3.3).
 
+        Enrichment is dispatched to the background rather than awaited: MusicBrainz paces at
+        roughly one artist per second and answers a burst with minute-long penalties, so a
+        pass over a real backlog outlives any request. The recomputed genome comes back
+        immediately from what is already stored, and ``stats.artists_pending`` tells the
+        caller that more is still resolving.
+
         :param listener: The listener id (``"household"`` in v1).
-        :param enrich: Resolve pending artist metadata (MusicBrainz/ListenBrainz) first.
+        :param enrich: Kick off a background pass to resolve pending artist metadata.
         """
-        return await self._rebuild(listener, enrich=enrich)
+        result = await self._rebuild(listener)
+        if enrich and self.get_config_value(
+            CONF_ENRICH_ENABLED, DEFAULT_ENRICH_ENABLED, return_type=bool
+        ):
+            self.mass.create_task(self._background_enrichment())
+        return result
 
     @api_command("genome/import_apple", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/import_apple")
@@ -726,6 +739,25 @@ class GenomeController(CoreController):
         if resolved:
             LOGGER.info("Scheduled MusicBrainz enrichment: %d artists resolved", resolved)
 
+    async def _background_enrichment(self) -> None:
+        """
+        Run one enrichment pass detached from a request, paced under MusicBrainz's limit.
+
+        Shares :attr:`_enrichment_lock` with the hourly pass, so a user pressing Rebuild
+        while the scheduled pass is running queues behind it instead of doubling the request
+        rate into MusicBrainz's rate limiter.
+        """
+        try:
+            resolved = await self._enrich_pending(
+                limit=GENOME_ENRICHMENT_BATCH_LIMIT,
+                min_interval_seconds=GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
+            )
+        except Exception:
+            LOGGER.warning("Background MusicBrainz enrichment pass failed", exc_info=True)
+            return
+        if resolved:
+            LOGGER.info("Background MusicBrainz enrichment: %d artists resolved", resolved)
+
     async def _run_ma_backfill(self, playlog_importer: Any) -> None:
         """
         Run the one-time MA playlog/tracks backfill in the background, then mark it done.
@@ -747,15 +779,17 @@ class GenomeController(CoreController):
         finally:
             await self.store.mark_backfill_done()
 
-    async def _rebuild(self, listener: str, *, enrich: bool = True) -> GenomeRebuildResult:
-        """Do the actual rebuild work shared by :meth:`rebuild` and :meth:`get_genome`."""
+    async def _rebuild(self, listener: str) -> GenomeRebuildResult:
+        """
+        Do the actual rebuild work shared by :meth:`rebuild` and :meth:`get_genome`.
+
+        Pure recomputation over what the store already holds: no network call happens here,
+        by construction. Enrichment is a separate, background concern
+        (:meth:`_background_enrichment`, :meth:`_scheduled_enrichment`) precisely so that
+        nothing a user is waiting on can end up blocked behind MusicBrainz's rate limiter.
+        """
         start = time.monotonic()
         listens = [listen async for listen in self.store.iter_listens(listener)]
-        artists_enriched = 0
-        if enrich and self.get_config_value(
-            CONF_ENRICH_ENABLED, DEFAULT_ENRICH_ENABLED, return_type=bool
-        ):
-            artists_enriched = await self._enrich_pending()
         artist_keys = sorted({listen.artist_key for listen in listens})
         artist_meta = await self.store.get_artist_meta(artist_keys)
         player_names = await self.store.player_names()
@@ -787,17 +821,15 @@ class GenomeController(CoreController):
         self.last_rebuild_at = params.now
         duration_ms = int((time.monotonic() - start) * 1000)
         LOGGER.info(
-            "Genome rebuilt for %s: %d listens, %d artists enriched, %d%% divergence, %dms",
+            "Genome rebuilt for %s: %d listens, %d%% divergence, %dms",
             listener,
             len(listens),
-            artists_enriched,
             genome["divergence"]["percent"],
             duration_ms,
         )
         return GenomeRebuildResult(
             listener=listener,
             listens_scanned=len(listens),
-            artists_enriched=artists_enriched,
             duration_ms=duration_ms,
             genome=genome,
         )

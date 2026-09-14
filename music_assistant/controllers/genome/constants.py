@@ -127,10 +127,16 @@ LISTENBRAINZ_POPULARITY_BATCH_SIZE: Final[int] = 50
 # MusicBrainz's own documented courtesy limit is ~1 req/sec; MA's shared, throttled client
 # (rate_limit=10, period=10) allows bursts of 10 in under a second, which is enough on its own
 # to trip the hosted mirror's own rate limiter (observed: a 63s `Retry-After` after a 200-artist
-# pass). Genome paces its *own* calls on top of that shared throttler, comfortably under 1/sec,
-# so it stops relying on that 63s penalty path at all.
-GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS: Final[float] = 1.1
+# pass). Genome paces its *own* calls on top of that shared throttler.
+#
+# The interval is per *artist*, and resolving one artist costs two requests (a search, then a
+# lookup) - so 1.1s/artist is ~1.8 req/sec, still over the limit, and a live pass spent its
+# whole time collecting 60s penalties rather than resolving anyone. It also shares the client
+# with MA's own metadata lookups. 2.5s/artist leaves headroom for both.
+GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS: Final[float] = 2.5
 GENOME_ENRICHMENT_TASK_ID: Final[str] = "genome_enrichment"
-# generous per-run ceiling for the continuous background enrichment pass; the pacing above -
-# not this number - is what bounds real-world duration (~1.1s/artist)
-GENOME_ENRICHMENT_BATCH_LIMIT: Final[int] = 2000
+# Per-run ceiling for the continuous background enrichment pass. The pacing above - not this
+# number - bounds real-world duration (~2.5s/artist), so this is really "how long may one pass
+# run": 500 artists is a little over 20 minutes, comfortably inside the hourly cadence, and a
+# backlog simply drains over successive runs.
+GENOME_ENRICHMENT_BATCH_LIMIT: Final[int] = 500

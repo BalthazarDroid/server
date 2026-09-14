@@ -192,9 +192,15 @@ async def test_apple_import_then_rebuild_produces_enriched_genres(
         assert import_result["rows_imported"] == 13
         assert import_result["rows_duplicate"] == 1
 
-        rebuild_result = await controller.rebuild()
+        # Enrichment is its own pass now, not something a rebuild does on the way past:
+        # resolve the pending artists first, then recompute over what that wrote. This is
+        # the real order of operations, so the test walks it rather than relying on a
+        # rebuild to reach for the network on its own.
+        resolved = await controller._enrich_pending()
+        assert resolved > 0
+
+        rebuild_result = await controller.rebuild(enrich=False)
         assert rebuild_result["listens_scanned"] == 13
-        assert rebuild_result["artists_enriched"] > 0
 
         genome = rebuild_result["genome"]
         assert genome["stats"]["total_listens"] == 13

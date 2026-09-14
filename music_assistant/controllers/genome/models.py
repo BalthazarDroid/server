@@ -263,7 +263,6 @@ class GenomeRebuildResult(TypedDict):
 
     listener: str
     listens_scanned: int
-    artists_enriched: int
     duration_ms: int
     genome: GenomeResult
 

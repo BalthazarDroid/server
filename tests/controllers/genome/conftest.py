@@ -7,6 +7,7 @@ frozen ``GenomeStore`` interface.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import tempfile
 from pathlib import Path
@@ -222,6 +223,9 @@ def mass_stub() -> MagicMock:
     mass = MagicMock()
     mass.storage_path = tempfile.mkdtemp()
     mass.tasks.register_scheduled_task = MagicMock()
+    # MA's real `create_task` schedules the coroutine; a bare MagicMock would swallow it,
+    # so anything dispatched to the background would silently never run under test.
+    mass.create_task = lambda coro, *_a, **_kw: asyncio.ensure_future(coro)
     mass.config.get_raw_core_config_value = MagicMock(return_value="GLOBAL")
     return mass
 

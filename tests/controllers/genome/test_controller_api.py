@@ -7,6 +7,7 @@ against the real ``GenomeStore`` (owned by a separate work package).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 
 import pytest
@@ -523,3 +524,58 @@ async def test_import_lastfm_accepts_a_well_formed_key_with_whitespace(
     genome_controller._lastfm_importer_factory = _factory  # type: ignore[assignment]
     await genome_controller.import_lastfm()
     assert captured["api_key"] == key
+
+
+async def test_get_genome_never_enriches(
+    genome_controller: GenomeController,
+    genome_store: StubGenomeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A read must never wait on MusicBrainz.
+
+    Regression: `genome/get` fell through to a rebuild that resolved pending artists inline.
+    On a real backlog that meant a MusicBrainz pass - paced at roughly one artist per second,
+    and answered with minute-long penalties when it slips - inside the websocket call the page
+    was waiting on. The page simply never finished loading.
+    """
+    calls = 0
+
+    async def _tripwire(*_args: object, **_kwargs: object) -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    monkeypatch.setattr(genome_controller, "_enrich_pending", _tripwire)
+    genome_store.listens.append(_listen())
+    await genome_controller.get_genome(refresh=True)
+    await genome_controller.get_genome()
+    assert calls == 0
+
+
+async def test_rebuild_dispatches_enrichment_without_awaiting_it(
+    genome_controller: GenomeController,
+    genome_store: StubGenomeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Rebuild returns the recomputed genome now and leaves enrichment running behind it.
+
+    The command must not block on the pass: `stats.artists_pending` is how the caller learns
+    that more is still resolving.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_pass(*_args: object, **_kwargs: object) -> int:
+        started.set()
+        await release.wait()
+        return 7
+
+    monkeypatch.setattr(genome_controller, "_enrich_pending", _slow_pass)
+    genome_store.listens.append(_listen())
+
+    result = await asyncio.wait_for(genome_controller.rebuild(), timeout=5)
+    assert result["listens_scanned"] == 1
+    await asyncio.wait_for(started.wait(), timeout=5)  # dispatched, still running
+    release.set()
