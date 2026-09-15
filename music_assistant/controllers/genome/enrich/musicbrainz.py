@@ -169,7 +169,6 @@ async def enrich_pending_artists(
                     "mb_tags": [{"name": name, "count": count} for name, count in update.mb_tags],
                     "genres": list(update.genres),
                     "begin_year": update.begin_year,
-                    "first_release_year": None,
                     "country": update.country,
                 }
             ],

@@ -24,7 +24,7 @@ Three modes, chosen by whichever fixture/dump flag is given (default: live fetch
 Usage:
     uv run -m scripts.build_genome_baseline --fixture tests/fixtures/genome/listenbrainz_baseline_sample.json \\
         --out music_assistant/controllers/genome/baseline/baseline_v1.json
-    uv run -m scripts.build_genome_baseline --out music_assistant/controllers/genome/baseline/baseline_v1.json --sample 50000
+    uv run -m scripts.build_genome_baseline --out music_assistant/controllers/genome/baseline/baseline_v1.json --sample 1500
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import random
 import re
 import sys
 from datetime import UTC, datetime
@@ -48,7 +49,18 @@ GENRE_MAPPING_PATH = (
 LISTENBRAINZ_BASE_URL = "https://api.listenbrainz.org"
 MUSICBRAINZ_BASE_URL = "https://musicbrainz-mirror.music-assistant.io/ws/2"
 REQUIRED_PERCENTILES = (5, 10, 25, 50, 75, 90)
-LIVE_REQUEST_DELAY_SECONDS = 1.0
+# MusicBrainz's documented courtesy limit is ~1 req/sec, and this project has already been
+# penalised once for treating that as a target rather than a ceiling. 1.3s with jitter keeps
+# every run comfortably under it even when several requests land on the same second.
+LIVE_REQUEST_DELAY_SECONDS = 1.3
+LIVE_REQUEST_JITTER_SECONDS = 0.4
+# Retry a transient failure rather than losing the whole run to one bad response.
+LIVE_MAX_ATTEMPTS = 4
+
+
+async def _pace() -> None:
+    """Wait out one request's share of the courtesy limit, with jitter to avoid lockstep."""
+    await asyncio.sleep(LIVE_REQUEST_DELAY_SECONDS + random.uniform(0, LIVE_REQUEST_JITTER_SECONDS))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -241,7 +253,7 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
             f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
             params={"count": str(sample)},
         )
-        await asyncio.sleep(LIVE_REQUEST_DELAY_SECONDS)
+        await _pace()
         artists = top_artists.get("payload", {}).get("artists", [])
         mbids = [a["artist_mbid"] for a in artists if a.get("artist_mbid")]
         popularity_by_mbid: dict[str, dict[str, Any]] = {}
@@ -254,7 +266,7 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
             )
             for item in popularity.get("payload", []):
                 popularity_by_mbid[item["artist_mbid"]] = item
-            await asyncio.sleep(LIVE_REQUEST_DELAY_SECONDS)
+            await _pace()
 
         for artist in artists:
             mbid = artist.get("artist_mbid")
@@ -266,7 +278,7 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
                 f"{MUSICBRAINZ_BASE_URL}/artist/{mbid}",
                 params={"inc": "tags+genres", "fmt": "json"},
             )
-            await asyncio.sleep(LIVE_REQUEST_DELAY_SECONDS)
+            await _pace()
             life_span = lookup.get("life-span") or {}
             begin = life_span.get("begin")
             records.append(
@@ -314,7 +326,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Output path for the baseline JSON file.",
     )
     parser.add_argument(
-        "--sample", type=int, default=50000, help="Live mode: number of top artists to sample."
+        "--sample",
+        type=int,
+        default=1500,
+        # 50000 was the original default and is indefensible: at one MusicBrainz lookup per
+        # artist it is a 13-hour run and a genuinely rude load on a donated service. The
+        # baseline is a distribution - a well-drawn sample of the top ~1500 artists pins the
+        # genre and era shares and the listener percentiles to more precision than the rest
+        # of this feature can honestly use.
+        help="Live mode: number of top artists to sample (each costs one MusicBrainz lookup).",
     )
     parser.add_argument(
         "--fixture", default=None, help="Offline mode: path to a local artist-sample JSON file."

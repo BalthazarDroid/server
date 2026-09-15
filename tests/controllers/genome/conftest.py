@@ -117,6 +117,11 @@ class StubGenomeStore:
         self.listens: list[Listen] = []
         self.artist_meta: dict[str, ArtistMeta] = {}
         self.cache: dict[str, GenomeResult] = {}
+        # popularity-backlog test doubles (§3.8 backfill) — set `popularity_backlog` directly
+        # in a test, then inspect `lb_popularity_updates`/`popularity_attempted` afterwards
+        self.popularity_backlog: list[tuple[str, str]] = []
+        self.lb_popularity_updates: dict[str, tuple[int, int]] = {}
+        self.popularity_attempted: list[str] = []
 
     async def setup(self) -> None:
         """No-op: nothing to open."""
@@ -190,7 +195,16 @@ class StubGenomeStore:
         return {}
 
     async def update_lb_popularity(self, rows: dict[str, tuple[int, int]]) -> None:
-        """No-op: the stub does not model ListenBrainz enrichment."""
+        """Record the merged popularity so a test can assert on it."""
+        self.lb_popularity_updates.update(rows)
+
+    async def pending_popularity_keys(self, limit: int = 200) -> list[tuple[str, str]]:
+        """Return whatever a test set on ``popularity_backlog``, capped at ``limit``."""
+        return self.popularity_backlog[:limit]
+
+    async def mark_popularity_attempted(self, artist_keys: Sequence[str]) -> None:
+        """Record which artists were looked up but had no popularity found, for assertions."""
+        self.popularity_attempted.extend(artist_keys)
 
     async def backfill_done(self) -> bool:
         """Report the one-time MA backfill as already done, so unit tests never trigger it."""

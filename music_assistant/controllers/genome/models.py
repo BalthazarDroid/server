@@ -63,6 +63,9 @@ class ArtistMeta:
     first_release_year: int | None
     lb_listeners: int | None
     lb_listen_count: int | None
+    # the artist's life-span begin year (MusicBrainz), used by era_facts only as a fallback proxy
+    # for first_release_year - see EraFacts.artist_year_share.
+    begin_year: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -223,16 +226,37 @@ class EraFacts(TypedDict):
     spread: float
     buckets: list[EraBucket]
     known_share: float
+    # share of `known_share`'s weight that used an artist's life-span begin year as a proxy for
+    # its release year (no `first_release_year` on file) - see engine.py::era_facts.
+    artist_year_share: float
 
 
 class LoyaltyFacts(TypedDict):
-    """Exploration versus repeat-listening behavior."""
+    """
+    Exploration versus repeat-listening behavior.
+
+    ``exploration_ratio``/``new_artists_90d`` measure how much of the recency-weighted
+    listening (or how many artists) are *new*; on a library imported in bulk from years of
+    history, almost nothing is "new" and this reads as ~0 without being wrong - see
+    ``effective_genres``/``effective_artists`` below for a figure that stays meaningful
+    however the history was accumulated.
+
+    ``effective_genres``/``effective_artists``/``baseline_effective_genres`` are each the
+    effective number of categories (``exp(H)`` of the Shannon entropy of a share
+    distribution - the Hill number of order 1; see ``engine.py::effective_count``), read as
+    "this household listens to the equivalent of N genres/artists, evenly". Unlike
+    ``exploration_ratio`` it does not care how long the history spans, so it stays meaningful
+    on a deep, one-shot-imported library.
+    """
 
     exploration_ratio: float
     concentration: float
     top_artist_share: float
     new_artists_90d: int
     repeat_rate: float
+    effective_genres: float
+    effective_artists: float
+    baseline_effective_genres: float
 
 
 class GenomeResult(TypedDict):

@@ -63,7 +63,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from .models import EngineParams, GenomeInputs, Listen
 
@@ -73,6 +73,7 @@ __all__ = [
     "build_genome",
     "build_genre_vector",
     "divergence_facts",
+    "effective_count",
     "era_facts",
     "js_contributions",
     "js_divergence",
@@ -141,6 +142,31 @@ def build_genre_vector(inputs: GenomeInputs) -> dict[str, float]:
         for genre in meta.genres:
             totals[genre] = totals.get(genre, 0.0) + share
     return _normalize(totals)
+
+
+def effective_count(shares: Iterable[float]) -> float:
+    """
+    Return the effective number of categories for a share distribution (§3.6).
+
+    This is ``exp(H)`` where ``H`` is the Shannon entropy of ``shares`` normalized to sum to
+    1 - the Hill number of order 1, a.k.a. perplexity. Read the result as "as if this many
+    equally-weighted categories": a single category (or an empty input) gives ``1.0``/``0.0``,
+    and ``n`` exactly equal shares give exactly ``n``, however many categories the input
+    actually lists or how their totals are scaled.
+
+    :param shares: Raw (not necessarily normalized) non-negative category weights; zero or
+        negative entries are ignored rather than passed to ``log``.
+    """
+    total = sum(share for share in shares if share > 0)
+    if total <= 0:
+        return 0.0
+    entropy = 0.0
+    for share in shares:
+        if share <= 0:
+            continue
+        p = share / total
+        entropy -= p * math.log(p)
+    return math.exp(entropy)
 
 
 def js_divergence(p: Mapping[str, float], q: Mapping[str, float]) -> float:
@@ -261,13 +287,23 @@ def era_facts(inputs: GenomeInputs) -> EraFacts:
     """
     total_w = 0.0
     known: list[tuple[float, int]] = []
+    artist_year_w = 0.0
     for listen in inputs.listens:
         w = listen_weight(listen, inputs.params)
         total_w += w
         meta = inputs.artist_meta.get(listen.artist_key)
-        if meta is None or meta.first_release_year is None:
+        if meta is None:
             continue
-        known.append((w, meta.first_release_year))
+        # first_release_year is preferred; an artist's life-span begin year is only a proxy
+        # (when the artist started, not when the music came out) - see EraFacts.artist_year_share.
+        year = meta.first_release_year
+        if year is None:
+            year = meta.begin_year
+            if year is not None:
+                artist_year_w += w
+        if year is None:
+            continue
+        known.append((w, year))
     known_w = sum(w for w, _ in known)
     if known_w > 0:
         com = sum(w * year for w, year in known) / known_w
@@ -289,11 +325,13 @@ def era_facts(inputs: GenomeInputs) -> EraFacts:
         for decade, w in sorted(bucket_w.items())
     ]
     known_share = known_w / total_w if total_w > 0 else 0.0
+    artist_year_share = artist_year_w / known_w if known_w > 0 else 0.0
     return EraFacts(
         center_of_mass=round(com, 1),
         spread=_r4(spread),
         buckets=buckets,
         known_share=_r4(known_share),
+        artist_year_share=_r4(artist_year_share),
     )
 
 
@@ -369,12 +407,19 @@ def loyalty_facts(inputs: GenomeInputs) -> LoyaltyFacts:
     distinct_tracks = len({listen.track_key for listen in inputs.listens})
     repeat_rate = 1 - distinct_tracks / total_listens if total_listens > 0 else 0.0
 
+    # same genre vector `build_genome` uses for divergence - reused rather than recomputed so
+    # there is only ever one definition of "the household's genre shares" in a result.
+    genre_vector = build_genre_vector(inputs)
+
     return LoyaltyFacts(
         exploration_ratio=_r4(new_w / total_w) if total_w > 0 else 0.0,
         concentration=_r4(concentration),
         top_artist_share=_r4(max(shares)) if shares else 0.0,
         new_artists_90d=new_artists_90d,
         repeat_rate=_r4(repeat_rate),
+        effective_genres=_r4(effective_count(genre_vector.values())),
+        effective_artists=_r4(effective_count(artist_w.values())),
+        baseline_effective_genres=_r4(effective_count(inputs.baseline.genre_shares.values())),
     )
 
 

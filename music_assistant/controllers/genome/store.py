@@ -7,11 +7,13 @@ rest of the Genome controller needs. Its public surface is frozen in
 ``docs/ARCHITECTURE.md`` Part 4 — WP-B's controller wiring calls it directly.
 
 Contract gap (see ``docs/STATUS.md`` "Contract gaps"): the frozen :class:`ArtistMeta` dataclass
-(``models.py``, the pure engine input) does not carry ``mb_tags``/``begin_year``/``country``, but
-the ``genome_artist_meta`` schema in §3.1 has columns for all three. The enrichment path
-(:mod:`music_assistant.controllers.genome.enrich.musicbrainz`) needs somewhere to put them, so
-this module adds :meth:`GenomeStore.upsert_artist_meta_full`, a superset write path, alongside the
-frozen :meth:`GenomeStore.upsert_artist_meta`. Both funnel through the same private helper.
+(``models.py``, the pure engine input) does not carry ``mb_tags``/``country``, but the
+``genome_artist_meta`` schema in §3.1 has columns for both (``begin_year`` was added to
+:class:`ArtistMeta` as ``era_facts``'s fallback proxy for a missing ``first_release_year``). The
+enrichment path (:mod:`music_assistant.controllers.genome.enrich.musicbrainz`) needs somewhere to
+put ``mb_tags``/``country``, so this module adds :meth:`GenomeStore.upsert_artist_meta_full`, a
+superset write path, alongside the frozen :meth:`GenomeStore.upsert_artist_meta`. Both funnel
+through the same private helper.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ from music_assistant.controllers.genome.models import (
     GenomeResult,
     Listen,
 )
-from music_assistant.helpers.database import DatabaseConnection
+from music_assistant.helpers.database import UNSET, DatabaseConnection
 from music_assistant.helpers.json import json_dumps, json_loads
 
 if TYPE_CHECKING:
@@ -78,7 +80,7 @@ class ArtistMetaWrite(TypedDict, total=False):
 
     A superset of :class:`~music_assistant.controllers.genome.models.ArtistMeta` (the frozen
     engine input) that also carries the enrichment-only columns the schema has but the engine
-    does not need: ``mb_tags``, ``begin_year``, ``country``. See the module docstring.
+    does not need: ``mb_tags``, ``country``. See the module docstring.
     """
 
     artist_key: str
@@ -117,7 +119,7 @@ class GenomeStore:
                 prev_version = int(row["value"])
             else:
                 prev_version = 0
-        except KeyError, ValueError:
+        except (KeyError, ValueError):
             prev_version = 0
 
         if prev_version not in (0, DB_SCHEMA_VERSION):
@@ -262,9 +264,9 @@ class GenomeStore:
         """
         Upsert engine-relevant artist metadata (the frozen ``GenomeStore`` surface).
 
-        Writes only the columns :class:`ArtistMeta` carries; ``mb_tags``/``begin_year``/
-        ``country`` are left unset. Use :meth:`upsert_artist_meta_full` from enrichment code that
-        has those values available.
+        Writes only the columns :class:`ArtistMeta` carries; ``mb_tags``/``country`` are left
+        unset. Use :meth:`upsert_artist_meta_full` from enrichment code that has those values
+        available.
 
         :param rows: The artist metadata to write.
         :param state: The ``resolve_state`` to stamp on every row.
@@ -277,6 +279,7 @@ class GenomeStore:
                     mbid=row.mbid,
                     genres=list(row.genres),
                     first_release_year=row.first_release_year,
+                    begin_year=row.begin_year,
                     lb_listeners=row.lb_listeners,
                     lb_listen_count=row.lb_listen_count,
                 )
@@ -323,6 +326,52 @@ class GenomeStore:
             limit=limit,
         )
         return [(row["artist_key"], row["artist_name"]) for row in rows]
+
+    async def pending_popularity_keys(self, limit: int = 200) -> list[tuple[str, str]]:
+        """
+        Return up to ``limit`` ``(artist_key, mbid)`` pairs still missing ListenBrainz popularity.
+
+        Modeled on :meth:`pending_artist_keys`: an artist lands here the moment it has an
+        ``mbid`` and stays here until ``lb_listeners`` is set, regardless of whether it was
+        resolved in this pass, an earlier pass, or before this backfill query existed at all.
+        There is no schema column recording "ListenBrainz has no data for this artist" (a
+        migration was avoided - see :meth:`mark_popularity_attempted`), so this is ordered
+        oldest-``resolved_at``-first and the caller is expected to call
+        :meth:`mark_popularity_attempted` for every key it looked up and still could not
+        find popularity for; that bump is what rotates a permanently-unknown artist to the back
+        of this same queue instead of it being retried every pass forever.
+
+        :param limit: The maximum number of rows to return.
+        """
+        assert self.database is not None
+        rows = await self.database.get_rows_from_query(
+            f"SELECT artist_key, mbid FROM {DB_TABLE_GENOME_ARTIST_META} "
+            "WHERE mbid IS NOT NULL AND lb_listeners IS NULL "
+            "ORDER BY resolved_at ASC",
+            limit=limit,
+        )
+        return [(row["artist_key"], row["mbid"]) for row in rows]
+
+    async def mark_popularity_attempted(self, artist_keys: Sequence[str]) -> None:
+        """
+        Bump ``resolved_at`` for artists a popularity backfill pass looked up but found nothing for.
+
+        See :meth:`pending_popularity_keys` for why this is the cooldown mechanism for that
+        backlog instead of a dedicated "not found" state.
+
+        :param artist_keys: The artist keys to mark as attempted just now.
+        """
+        assert self.database is not None
+        if not artist_keys:
+            return
+        now = int(time.time())
+        for artist_key in artist_keys:
+            await self.database.execute(
+                f"UPDATE {DB_TABLE_GENOME_ARTIST_META} SET resolved_at = :now "
+                "WHERE artist_key = :artist_key",
+                {"now": now, "artist_key": artist_key},
+            )
+        await self.database.commit()
 
     async def get_cached_genome(self, listener: str) -> GenomeResult | None:
         """Return the cached :class:`GenomeResult` for ``listener``, or ``None`` if absent."""
@@ -567,6 +616,7 @@ class GenomeStore:
             mbid=row["mbid"],
             genres=genres,
             first_release_year=row["first_release_year"],
+            begin_year=row["begin_year"],
             lb_listeners=row["lb_listeners"],
             lb_listen_count=row["lb_listen_count"],
         )
@@ -596,7 +646,10 @@ class GenomeStore:
                 "mb_tags": json_dumps(row.get("mb_tags") or []),
                 "genres": json_dumps(row.get("genres") or []),
                 "begin_year": row.get("begin_year"),
-                "first_release_year": row.get("first_release_year"),
+                # UNSET (not None) when absent: a caller with no fresh release-year data (e.g.
+                # the MusicBrainz enrichment pass, which has no release-year source at all) must
+                # not clobber a value written by another enrichment path - see musicbrainz.py.
+                "first_release_year": row.get("first_release_year", UNSET),
                 "country": row.get("country"),
                 "lb_listeners": row.get("lb_listeners"),
                 "lb_listen_count": row.get("lb_listen_count"),

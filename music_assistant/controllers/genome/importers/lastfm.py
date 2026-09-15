@@ -325,7 +325,7 @@ class LastfmImporter:
                 continue
             try:
                 played_at = int(date["uts"])
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 continue
             artist_name = track.get("artist", {}).get("#text", "")
             track_name = track.get("name", "")

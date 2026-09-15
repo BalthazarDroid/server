@@ -30,7 +30,7 @@ from music_assistant.controllers.genome.models import (
     GenomeSettingsPatch,
     Listen,
 )
-from tests.controllers.genome.conftest import StubGenomeStore
+from tests.controllers.genome.conftest import FixtureHttpClient, StubGenomeStore
 
 CSV_CHUNK_1 = base64.b64encode(b"Song Name,Artist Name,Event Start Timestamp\n").decode()
 CSV_CHUNK_2 = base64.b64encode(b"Test Song,Test Artist,2024-01-01T00:00:00Z\n").decode()
@@ -579,3 +579,79 @@ async def test_rebuild_dispatches_enrichment_without_awaiting_it(
     assert result["listens_scanned"] == 1
     await asyncio.wait_for(started.wait(), timeout=5)  # dispatched, still running
     release.set()
+
+
+def _patch_listenbrainz_client(
+    monkeypatch: pytest.MonkeyPatch, fixture_http_client: FixtureHttpClient
+) -> None:
+    """Make every ``AiohttpClient(...)`` construction in genome/* return ``fixture_http_client``."""
+    monkeypatch.setattr(
+        "music_assistant.controllers.genome.http.AiohttpClient",
+        lambda *_args, **_kwargs: fixture_http_client,
+    )
+
+
+async def test_enrich_pending_drains_popularity_backlog_independent_of_resolution(
+    genome_controller: GenomeController,
+    genome_store: StubGenomeStore,
+    fixture_http_client: FixtureHttpClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Regression: lb_listeners was only ever looked up for artists the current pass resolved.
+
+    An artist that already has an mbid from an earlier pass (or a pass whose ListenBrainz lookup
+    failed) but never got popularity must still be picked up here, even when nothing is pending
+    MusicBrainz resolution at all.
+    """
+    _patch_listenbrainz_client(monkeypatch, fixture_http_client)
+    genome_store.popularity_backlog = [("sigurros", "f6f2326f-6b25-4170-b89d-e235b25508e8")]
+
+    resolved = await genome_controller._enrich_pending()
+
+    assert resolved == 0  # nothing was pending MusicBrainz resolution
+    assert genome_store.lb_popularity_updates["sigurros"] == (118422, 4821334)
+    assert genome_store.popularity_attempted == []
+
+
+async def test_enrich_pending_marks_unresolved_popularity_as_attempted(
+    genome_controller: GenomeController,
+    genome_store: StubGenomeStore,
+    fixture_http_client: FixtureHttpClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An artist ListenBrainz has no data for is marked attempted, not retried every pass."""
+    _patch_listenbrainz_client(monkeypatch, fixture_http_client)
+    genome_store.popularity_backlog = [("ghost", "00000000-missing-mbid")]
+
+    await genome_controller._enrich_pending()
+
+    assert genome_store.lb_popularity_updates == {}
+    assert genome_store.popularity_attempted == ["ghost"]
+
+
+async def test_enrich_pending_caps_popularity_backlog_at_limit(
+    genome_controller: GenomeController,
+    genome_store: StubGenomeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The popularity backfill pass is capped by the same ``limit`` as the MusicBrainz pass."""
+    captured: dict[str, int] = {}
+
+    async def _fake_pending_popularity_keys(limit: int = 200) -> list[tuple[str, str]]:
+        captured["limit"] = limit
+        return []
+
+    monkeypatch.setattr(genome_store, "pending_popularity_keys", _fake_pending_popularity_keys)
+
+    await genome_controller._enrich_pending(limit=5)
+
+    assert captured["limit"] == 5
+
+
+async def test_enrich_pending_is_noop_with_no_backlog(
+    genome_controller: GenomeController,
+) -> None:
+    """An empty popularity backlog (the default stub state) must not raise."""
+    resolved = await genome_controller._enrich_pending()
+    assert resolved == 0

@@ -8,6 +8,8 @@ fixture (§1.11).
 
 from __future__ import annotations
 
+import pytest
+
 from music_assistant.controllers.genome import engine
 from music_assistant.controllers.genome.models import (
     ArtistMeta,
@@ -292,6 +294,54 @@ def test_era_facts_handles_no_known_years() -> None:
     assert facts["spread"] == 0.0
     assert facts["known_share"] == 0.0
     assert facts["buckets"] == []
+    assert facts["artist_year_share"] == 0.0
+
+
+def test_era_facts_prefers_first_release_year_over_begin_year() -> None:
+    """Test era facts prefers first release year over begin year."""
+    meta = ArtistMeta("a", "A", None, (), 1999, 100, 1000, begin_year=1980)
+    inputs = _inputs([_listen(artist_key="a")], artist_meta={"a": meta})
+    facts = engine.era_facts(inputs)
+    assert facts["center_of_mass"] == 1999.0
+    assert facts["known_share"] == 1.0
+    assert facts["artist_year_share"] == 0.0
+
+
+def test_era_facts_falls_back_to_begin_year_when_release_year_absent() -> None:
+    """Test era facts falls back to begin year when release year absent."""
+    meta = ArtistMeta("a", "A", None, (), None, 100, 1000, begin_year=1980)
+    inputs = _inputs([_listen(artist_key="a")], artist_meta={"a": meta})
+    facts = engine.era_facts(inputs)
+    assert facts["center_of_mass"] == 1980.0
+    assert facts["known_share"] == 1.0
+    assert facts["artist_year_share"] == 1.0
+
+
+def test_era_facts_reports_partial_artist_year_share() -> None:
+    """Test era facts reports partial artist year share."""
+    meta_a = ArtistMeta("a", "A", None, (), 2000, 100, 1000)
+    meta_b = ArtistMeta("b", "B", None, (), None, 100, 1000, begin_year=1980)
+    inputs = _inputs(
+        [
+            _listen(artist_key="a", track_key="t1"),
+            _listen(artist_key="b", track_key="t2"),
+        ],
+        artist_meta={"a": meta_a, "b": meta_b},
+        params=_params(half_life_days=0),
+    )
+    facts = engine.era_facts(inputs)
+    assert facts["known_share"] == 1.0
+    assert facts["artist_year_share"] == 0.5
+
+
+def test_era_facts_neither_year_present_excludes_and_stays_zero() -> None:
+    """Test era facts neither year present excludes and stays zero."""
+    meta = ArtistMeta("a", "A", None, (), None, 100, 1000)
+    inputs = _inputs([_listen(artist_key="a")], artist_meta={"a": meta})
+    facts = engine.era_facts(inputs)
+    assert facts["center_of_mass"] == 0.0
+    assert facts["known_share"] == 0.0
+    assert facts["artist_year_share"] == 0.0
 
 
 def test_loyalty_exploration_ratio_for_new_artist() -> None:
@@ -317,6 +367,83 @@ def test_loyalty_repeat_rate() -> None:
     )
     facts = engine.loyalty_facts(inputs)
     assert facts["repeat_rate"] == round(1 - 2 / 3, 4)
+
+
+def test_effective_count_empty_is_zero() -> None:
+    """Test effective count of an empty distribution is zero, not a log(0) crash."""
+    assert engine.effective_count([]) == 0.0
+    assert engine.effective_count([0.0, 0.0]) == 0.0
+
+
+def test_effective_count_single_share_is_one() -> None:
+    """Test effective count of a single category is exactly 1.0, any magnitude."""
+    assert engine.effective_count([1.0]) == 1.0
+    assert engine.effective_count([42.0]) == 1.0
+
+
+def test_effective_count_equal_shares_equals_n() -> None:
+    """Test N equal shares give an effective count of exactly N, for two different N."""
+    assert engine.effective_count([1.0] * 3) == pytest.approx(3.0)
+    assert engine.effective_count([1.0] * 7) == pytest.approx(7.0)
+
+
+def test_effective_count_is_scale_invariant() -> None:
+    """Test scaling every share by the same factor does not change the effective count."""
+    shares = [1.0, 2.0, 3.0, 4.0]
+    base = engine.effective_count(shares)
+    assert engine.effective_count([s * 100 for s in shares]) == pytest.approx(base)
+    assert engine.effective_count([s * 0.01 for s in shares]) == pytest.approx(base)
+
+
+def test_effective_count_skips_non_positive_shares() -> None:
+    """Test a zero or negative share is skipped rather than fed to log."""
+    assert engine.effective_count([1.0, 1.0, 0.0, -5.0]) == pytest.approx(2.0)
+
+
+def test_loyalty_facts_effective_counts_on_empty_input() -> None:
+    """Test loyalty facts effective_genres/effective_artists are 0.0 with no listens."""
+    facts = engine.loyalty_facts(_inputs([]))
+    assert facts["effective_genres"] == 0.0
+    assert facts["effective_artists"] == 0.0
+
+
+def test_loyalty_facts_baseline_effective_genres_uses_baseline_shares() -> None:
+    """Test baseline_effective_genres reflects inputs.baseline.genre_shares, not the household."""
+    inputs = _inputs(
+        [_listen()],
+        baseline=_baseline(genre_shares={"rock": 0.25, "pop": 0.25, "jazz": 0.25, "folk": 0.25}),
+    )
+    facts = engine.loyalty_facts(inputs)
+    assert facts["baseline_effective_genres"] == pytest.approx(4.0)
+
+
+def test_loyalty_facts_effective_artists_two_equal_artists() -> None:
+    """Test effective_artists is exactly 2.0 when two artists split recency-weighted plays evenly."""
+    inputs = _inputs(
+        [
+            _listen(artist_key="a", track_key="t1"),
+            _listen(artist_key="b", track_key="t2"),
+        ],
+        params=_params(half_life_days=0),
+    )
+    facts = engine.loyalty_facts(inputs)
+    assert facts["effective_artists"] == pytest.approx(2.0)
+
+
+def test_loyalty_facts_effective_genres_matches_build_genre_vector() -> None:
+    """Test effective_genres is derived from the same genre vector build_genome uses."""
+    meta = {
+        "a": ArtistMeta("a", "A", None, ("rock",), None, None, None),
+        "b": ArtistMeta("b", "B", None, ("pop",), None, None, None),
+    }
+    inputs = _inputs(
+        [_listen(artist_key="a", track_key="t1"), _listen(artist_key="b", track_key="t2")],
+        artist_meta=meta,
+        params=_params(half_life_days=0),
+    )
+    facts = engine.loyalty_facts(inputs)
+    expected = engine.effective_count(engine.build_genre_vector(inputs).values())
+    assert facts["effective_genres"] == round(expected, 4)
 
 
 def test_top_artists_sorted_and_limited() -> None:
@@ -428,7 +555,7 @@ def test_build_genome_full_result_shape_is_stable() -> None:
     result = engine.build_genome(inputs)
     # Pinned as a literal on purpose: adding or removing a GenomeResult field must force
     # this number up, because the cache discards blobs recorded at any other version.
-    assert result["schema_version"] == 2
+    assert result["schema_version"] == 4
     assert result["engine_version"] == engine.ENGINE_VERSION
     assert result["listener"] == "household"
     assert result["stats"]["total_listens"] == 1

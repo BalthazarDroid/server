@@ -250,3 +250,108 @@ async def test_artist_resolution_counts_groups_by_state(tmp_path: Path) -> None:
         assert counts == {"pending": 1, "ok": 1, "not_found": 1}
     finally:
         await store.close()
+
+
+async def test_pending_popularity_keys_finds_resolved_artists_missing_listeners(
+    tmp_path: Path,
+) -> None:
+    """An artist with an mbid but no lb_listeners is the popularity backlog, regardless of age."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [
+                {
+                    "artist_key": "sigurros",
+                    "artist_name": "Sigur Rós",
+                    "mbid": "f6f2326f-6b25-4170-b89d-e235b25508e8",
+                }
+            ],
+            state="ok",
+        )
+        assert await store.pending_popularity_keys() == [
+            ("sigurros", "f6f2326f-6b25-4170-b89d-e235b25508e8")
+        ]
+    finally:
+        await store.close()
+
+
+async def test_pending_popularity_keys_excludes_unresolved_and_already_populated(
+    tmp_path: Path,
+) -> None:
+    """No mbid (still pending) and an already-known lb_listeners must both be excluded."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.add_listens([_listen()], listener="household")  # pending, no mbid yet
+        await store.upsert_artist_meta_full(
+            [
+                {
+                    "artist_key": "known-popularity",
+                    "artist_name": "Known Popularity",
+                    "mbid": "c3ae7ee4-8b02-4c33-8ae9-3d15fcb9d4d0",
+                    "lb_listeners": 61,
+                    "lb_listen_count": 900,
+                }
+            ],
+            state="ok",
+        )
+        assert await store.pending_popularity_keys() == []
+    finally:
+        await store.close()
+
+
+async def test_pending_popularity_keys_respects_limit(tmp_path: Path) -> None:
+    """The limit argument caps how many backlog rows come back in one pass."""
+    store = await _new_store(tmp_path)
+    try:
+        for i in range(3):
+            await store.upsert_artist_meta_full(
+                [{"artist_key": f"artist-{i}", "artist_name": f"Artist {i}", "mbid": f"mbid-{i}"}],
+                state="ok",
+            )
+        assert len(await store.pending_popularity_keys(limit=2)) == 2
+    finally:
+        await store.close()
+
+
+async def test_mark_popularity_attempted_rotates_backlog_order(tmp_path: Path) -> None:
+    """Marking a backlog artist as attempted moves it behind others in resolved_at order."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "always-unknown", "artist_name": "Always Unknown", "mbid": "mbid-a"}],
+            state="ok",
+        )
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "next-in-line", "artist_name": "Next In Line", "mbid": "mbid-b"}],
+            state="ok",
+        )
+        # both rows land with the same real-clock resolved_at (same second) - pin them apart
+        # explicitly so this test's ordering assertions don't depend on sqlite's tie-break.
+        assert store.database is not None
+        await store.database.execute(
+            "UPDATE genome_artist_meta SET resolved_at = :t WHERE artist_key = :k",
+            {"t": 1_000, "k": "always-unknown"},
+        )
+        await store.database.execute(
+            "UPDATE genome_artist_meta SET resolved_at = :t WHERE artist_key = :k",
+            {"t": 2_000, "k": "next-in-line"},
+        )
+        await store.database.commit()
+
+        backlog = await store.pending_popularity_keys(limit=1)
+        assert backlog == [("always-unknown", "mbid-a")]
+
+        await store.mark_popularity_attempted(["always-unknown"])
+        backlog = await store.pending_popularity_keys(limit=1)
+        assert backlog == [("next-in-line", "mbid-b")]
+    finally:
+        await store.close()
+
+
+async def test_mark_popularity_attempted_noop_on_empty_list(tmp_path: Path) -> None:
+    """Calling with no keys must not raise or touch anything."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.mark_popularity_attempted([])
+    finally:
+        await store.close()
