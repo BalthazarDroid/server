@@ -197,7 +197,11 @@ class GenomeStats(TypedDict):
     last_listen: int | None
     coverage_by_source: dict[str, int]
     enrichment_coverage: float
-    artists_pending: int  # known artists not yet resolved (pending/error resolve_state)
+    artists_pending: int
+    # Artists whose lookup RAISED rather than simply finding nothing. Counted separately
+    # because "still resolving" and "could not be identified" are different facts, and
+    # folding the second into the first makes a progress notice that never finishes.
+    artists_failed: int  # known artists not yet resolved (pending/error resolve_state)
     artists_resolved: int  # known artists with a final resolution (ok/not_found resolve_state)
 
 

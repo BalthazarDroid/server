@@ -843,9 +843,8 @@ class GenomeController(CoreController):
         except Exception:  # pragma: no cover - defensive, must never fail a rebuild
             LOGGER.debug("Could not read artist resolution counts", exc_info=True)
             return
-        genome["stats"]["artists_pending"] = counts.get(RESOLVE_STATE_PENDING, 0) + counts.get(
-            RESOLVE_STATE_ERROR, 0
-        )
+        genome["stats"]["artists_pending"] = counts.get(RESOLVE_STATE_PENDING, 0)
+        genome["stats"]["artists_failed"] = counts.get(RESOLVE_STATE_ERROR, 0)
         genome["stats"]["artists_resolved"] = counts.get(RESOLVE_STATE_OK, 0) + counts.get(
             RESOLVE_STATE_NOT_FOUND, 0
         )

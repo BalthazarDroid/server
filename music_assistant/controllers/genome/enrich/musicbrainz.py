@@ -139,6 +139,7 @@ async def enrich_pending_artists(
         return 0
     LOGGER.info("MusicBrainz enrichment pass starting: %d pending artists", len(pending))
     resolved = 0
+    failures: list[str] = []
     last_call = 0.0
     for artist_key, artist_name in pending:
         if min_interval_seconds > 0:
@@ -150,6 +151,7 @@ async def enrich_pending_artists(
             update = await resolve_artist(artist_name, client=client, mass=mass)
         except Exception as err:
             LOGGER.debug("MusicBrainz lookup failed for %r: %s", artist_name, err)
+            failures.append(artist_name)
             await store.upsert_artist_meta_full(
                 [{"artist_key": artist_key, "artist_name": artist_name}], state=RESOLVE_STATE_ERROR
             )
@@ -175,6 +177,14 @@ async def enrich_pending_artists(
             state=RESOLVE_STATE_OK,
         )
         resolved += 1
+    if failures:
+        # Named, at INFO, because a handful of artists that fail every pass is the difference
+        # between "still working" and "stuck", and nobody reads debug logs on a live box.
+        LOGGER.info(
+            "MusicBrainz lookup raised for %d artist(s) this pass: %s",
+            len(failures),
+            ", ".join(repr(name) for name in failures[:8]),
+        )
     LOGGER.info(
         "MusicBrainz enrichment pass finished: %d/%d artists resolved", resolved, len(pending)
     )

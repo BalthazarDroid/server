@@ -30,7 +30,7 @@ LISTENER_HOUSEHOLD: Final[str] = "household"
 # that module is written, so nothing downstream needs to change.
 ENGINE_VERSION: Final[str] = "1.0.0"
 BASELINE_VERSION: Final[str] = "v1-2026-09"
-GENOME_RESULT_SCHEMA_VERSION: Final[int] = 4  # 4: added LoyaltyFacts effective_* fields
+GENOME_RESULT_SCHEMA_VERSION: Final[int] = 5  # 4: added LoyaltyFacts effective_* fields
 
 # --- recency weighting defaults (§3.5) ----------------------------------------------
 
@@ -87,6 +87,11 @@ RESOLVE_STATE_ERROR: Final[str] = "error"
 
 RESOLVE_OK_COOLDOWN_DAYS: Final[int] = 180
 RESOLVE_NOT_FOUND_COOLDOWN_DAYS: Final[int] = 30
+# An artist whose lookup RAISES was previously eligible again immediately, so a name that
+# fails every time was retried on every pass forever and sat in "still resolving" for good.
+# A cooldown lets it be retried a few times a day - often enough to recover from a transient
+# outage, rarely enough that a permanently broken name stops churning.
+RESOLVE_ERROR_COOLDOWN_HOURS: Final[int] = 6
 
 # --- Apple Music CSV upload protocol (§3.3) ------------------------------------------
 

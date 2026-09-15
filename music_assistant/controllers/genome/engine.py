@@ -694,6 +694,7 @@ def _build_stats(inputs: GenomeInputs, total_w: float) -> GenomeStats:
         # *whole* store (only per-listen artist_meta lookups); the controller overwrites these
         # with real counts from GenomeStore.artist_resolution_counts() after a rebuild (§3.8, P3)
         artists_pending=0,
+        artists_failed=0,
         artists_resolved=0,
     )
 

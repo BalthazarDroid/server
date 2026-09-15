@@ -31,6 +31,7 @@ from music_assistant.controllers.genome.constants import (
     ENGINE_VERSION,
     GENOME_RESULT_SCHEMA_VERSION,
     LOGGER,
+    RESOLVE_ERROR_COOLDOWN_HOURS,
     RESOLVE_NOT_FOUND_COOLDOWN_DAYS,
     RESOLVE_OK_COOLDOWN_DAYS,
     RESOLVE_STATE_ERROR,
@@ -119,7 +120,7 @@ class GenomeStore:
                 prev_version = int(row["value"])
             else:
                 prev_version = 0
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             prev_version = 0
 
         if prev_version not in (0, DB_SCHEMA_VERSION):
@@ -301,23 +302,31 @@ class GenomeStore:
         """
         Return up to ``limit`` ``(artist_key, artist_name)`` pairs due for (re-)resolution.
 
-        Eligible rows: ``pending`` or ``error`` state (always eligible), ``ok`` state older than
-        :data:`RESOLVE_OK_COOLDOWN_DAYS`, or ``not_found`` state older than
+        Eligible rows: ``pending`` (always), ``error`` older than
+        :data:`RESOLVE_ERROR_COOLDOWN_HOURS`, ``ok`` older than
+        :data:`RESOLVE_OK_COOLDOWN_DAYS`, or ``not_found`` older than
         :data:`RESOLVE_NOT_FOUND_COOLDOWN_DAYS` (§3.8).
+
+        ``error`` carries a cooldown rather than being immediately eligible: without one, an
+        artist whose lookup fails every time is retried on every pass forever and never leaves
+        the "still resolving" count.
         """
         assert self.database is not None
         now = int(time.time())
         ok_cutoff = now - RESOLVE_OK_COOLDOWN_DAYS * 86400
+        error_cutoff = now - RESOLVE_ERROR_COOLDOWN_HOURS * 3600
         not_found_cutoff = now - RESOLVE_NOT_FOUND_COOLDOWN_DAYS * 86400
         rows = await self.database.get_rows_from_query(
             f"SELECT artist_key, artist_name FROM {DB_TABLE_GENOME_ARTIST_META} "
-            "WHERE resolve_state = :pending OR resolve_state = :error "
+            "WHERE resolve_state = :pending "
+            "OR (resolve_state = :error AND resolved_at < :error_cutoff) "
             "OR (resolve_state = :ok AND resolved_at < :ok_cutoff) "
             "OR (resolve_state = :not_found AND resolved_at < :not_found_cutoff) "
             "ORDER BY resolved_at ASC",
             {
                 "pending": RESOLVE_STATE_PENDING,
                 "error": RESOLVE_STATE_ERROR,
+                "error_cutoff": error_cutoff,
                 "ok": RESOLVE_STATE_OK,
                 "ok_cutoff": ok_cutoff,
                 "not_found": RESOLVE_STATE_NOT_FOUND,

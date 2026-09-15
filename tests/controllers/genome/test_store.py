@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import time
 import types
 from typing import TYPE_CHECKING
 
-from music_assistant.controllers.genome.constants import GENOME_RESULT_SCHEMA_VERSION
+from music_assistant.controllers.genome.constants import (
+    DB_TABLE_GENOME_ARTIST_META,
+    GENOME_RESULT_SCHEMA_VERSION,
+    RESOLVE_ERROR_COOLDOWN_HOURS,
+    RESOLVE_STATE_ERROR,
+)
 from music_assistant.controllers.genome.models import Listen
 from music_assistant.controllers.genome.store import ArtistMetaWrite, GenomeStore
 
@@ -353,5 +359,41 @@ async def test_mark_popularity_attempted_noop_on_empty_list(tmp_path: Path) -> N
     store = await _new_store(tmp_path)
     try:
         await store.mark_popularity_attempted([])
+    finally:
+        await store.close()
+
+
+async def test_pending_artist_keys_holds_off_a_repeatedly_failing_artist(tmp_path: Path) -> None:
+    """
+    An artist whose lookup raised is not eligible again until its cooldown expires.
+
+    Regression: `error` was always eligible, so three artists that failed every time were
+    retried on every pass and sat in "still resolving" for days - a progress notice that
+    could never finish.
+    """
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "a", "artist_name": "Broken"}], state=RESOLVE_STATE_ERROR
+        )
+        assert await store.pending_artist_keys() == []
+    finally:
+        await store.close()
+
+
+async def test_pending_artist_keys_retries_a_failure_once_cooled_off(tmp_path: Path) -> None:
+    """A cooldown is a delay, not a grave: the artist comes back round eventually."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "a", "artist_name": "Broken"}], state=RESOLVE_STATE_ERROR
+        )
+        stale = int(time.time()) - (RESOLVE_ERROR_COOLDOWN_HOURS + 1) * 3600
+        assert store.database is not None
+        await store.database.execute(
+            f"UPDATE {DB_TABLE_GENOME_ARTIST_META} SET resolved_at = :t WHERE artist_key = 'a'",
+            {"t": stale},
+        )
+        assert [key for key, _name in await store.pending_artist_keys()] == ["a"]
     finally:
         await store.close()
