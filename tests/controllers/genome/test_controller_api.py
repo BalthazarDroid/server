@@ -176,6 +176,35 @@ async def test_get_genome_empty_state(genome_controller: GenomeController) -> No
     assert result["listener"] == LISTENER_HOUSEHOLD
 
 
+async def test_unresolved_artists_returns_store_rows(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """`genome/unresolved_artists` passes through whatever the store reports as failed."""
+    genome_store.failed_artists = [
+        {"artist_key": "a", "artist_name": "Artist A", "resolved_at": 200},
+        {"artist_key": "b", "artist_name": "Artist B", "resolved_at": 100},
+    ]
+    result = await genome_controller.unresolved_artists()
+    assert result == genome_store.failed_artists
+
+
+async def test_unresolved_artists_passes_limit_through(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """The `limit` argument reaches the store unchanged."""
+    genome_store.failed_artists = [
+        {"artist_key": "a", "artist_name": "Artist A", "resolved_at": 200},
+        {"artist_key": "b", "artist_name": "Artist B", "resolved_at": 100},
+    ]
+    result = await genome_controller.unresolved_artists(limit=1)
+    assert result == [genome_store.failed_artists[0]]
+
+
+async def test_unresolved_artists_empty_by_default(genome_controller: GenomeController) -> None:
+    """No artists have failed in the stub by default."""
+    assert await genome_controller.unresolved_artists() == []
+
+
 async def test_get_genome_serves_fresh_cache(
     genome_controller: GenomeController, genome_store: StubGenomeStore
 ) -> None:

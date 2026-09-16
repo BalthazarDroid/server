@@ -149,6 +149,14 @@ class ArtistFact(TypedDict):
     genres: list[str]
 
 
+class FailedArtist(TypedDict):
+    """A single row in the ``genome/unresolved_artists`` result (§3.4)."""
+
+    artist_key: str
+    artist_name: str
+    resolved_at: int
+
+
 class TrackFact(TypedDict):
     """A single row in ``GenomeResult.top_tracks``."""
 

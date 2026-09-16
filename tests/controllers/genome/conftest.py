@@ -23,7 +23,12 @@ from music_assistant.helpers.json import json_loads
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
-    from music_assistant.controllers.genome.models import ArtistMeta, GenomeResult, Listen
+    from music_assistant.controllers.genome.models import (
+        ArtistMeta,
+        FailedArtist,
+        GenomeResult,
+        Listen,
+    )
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "genome"
@@ -122,6 +127,9 @@ class StubGenomeStore:
         self.popularity_backlog: list[tuple[str, str]] = []
         self.lb_popularity_updates: dict[str, tuple[int, int]] = {}
         self.popularity_attempted: list[str] = []
+        # unresolved-artists test double (§3.4 `genome/unresolved_artists`) — set directly
+        # in a test that wants non-empty results
+        self.failed_artists: list[FailedArtist] = []
 
     async def setup(self) -> None:
         """No-op: nothing to open."""
@@ -223,6 +231,10 @@ class StubGenomeStore:
     async def artist_resolution_counts(self) -> dict[str, int]:
         """No known artists in the stub by default."""
         return {}
+
+    async def failed_artist_keys(self, limit: int = 100) -> list[FailedArtist]:
+        """Return whatever a test set on ``failed_artists``, capped at ``limit``."""
+        return self.failed_artists[:limit]
 
 
 @pytest.fixture

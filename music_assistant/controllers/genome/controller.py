@@ -79,6 +79,7 @@ from .engine import build_genome
 from .errors import LastfmNotConfiguredError
 from .models import (
     EngineParams,
+    FailedArtist,
     GenomeImportResult,
     GenomeInputs,
     GenomeRebuildResult,
@@ -178,6 +179,7 @@ class _GenomeStoreProtocol(Protocol):
     async def lastfm_backfill_done(self) -> bool: ...
     async def mark_lastfm_backfill_done(self) -> None: ...
     async def artist_resolution_counts(self) -> dict[str, int]: ...
+    async def failed_artist_keys(self, limit: int = 100) -> list[FailedArtist]: ...
 
 
 class _UploadState:
@@ -423,6 +425,19 @@ class GenomeController(CoreController):
         # Never enrich on a read: a page load must return what we already know. Resolving
         # artists means MusicBrainz, which is rate-limited in minutes, not milliseconds.
         return (await self._rebuild(listener))["genome"]
+
+    @api_command("genome/unresolved_artists", required_scope=Scope.LIBRARY_READ)
+    @_log_command_errors("genome/unresolved_artists")
+    async def unresolved_artists(self, limit: int = 100) -> list[FailedArtist]:
+        """
+        Return the artists whose MusicBrainz lookup failed, so the UI can name them.
+
+        These are exactly the artists counted in ``GenomeStats.artists_failed`` (see
+        :meth:`GenomeStore.failed_artist_keys`).
+
+        :param limit: The maximum number of rows to return.
+        """
+        return await self.store.failed_artist_keys(limit=limit)
 
     @api_command("genome/rebuild", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/rebuild")

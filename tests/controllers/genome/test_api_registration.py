@@ -37,6 +37,7 @@ def test_controller_exposes_api_commands() -> None:
     names = {name for name, _ in _api_command_methods()}
     assert {
         "get_genome",
+        "unresolved_artists",
         "rebuild",
         "import_apple",
         "import_lastfm",
@@ -76,6 +77,7 @@ def test_api_command_annotations_resolve_at_runtime(name: str, func: object) -> 
 # one representative payload per command, shaped the way the frontend sends it
 _SAMPLE_ARGS: dict[str, dict[str, Any]] = {
     "get_genome": {"listener": "household", "refresh": False},
+    "unresolved_artists": {"limit": 50},
     "rebuild": {"listener": "household", "enrich": True},
     "import_apple": {
         "upload_id": "u1",

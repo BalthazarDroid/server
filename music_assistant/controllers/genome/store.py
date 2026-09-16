@@ -43,6 +43,7 @@ from music_assistant.controllers.genome.constants import (
 )
 from music_assistant.controllers.genome.models import (
     ArtistMeta,
+    FailedArtist,
     GenomeImportResult,
     GenomeResult,
     Listen,
@@ -360,6 +361,35 @@ class GenomeStore:
             limit=limit,
         )
         return [(row["artist_key"], row["mbid"]) for row in rows]
+
+    async def failed_artist_keys(self, limit: int = 100) -> list[FailedArtist]:
+        """
+        Return up to ``limit`` artists currently sitting in the ``error`` resolve state.
+
+        Newest attempt first, so a user checking "who failed" sees the most recent failures
+        without having to scroll past ones that may already have been retried and moved on.
+        Unlike :meth:`pending_artist_keys`, there is no cooldown filter here - this is a status
+        listing, not a retry queue, so it reports every artist currently in ``error`` regardless
+        of when it is next eligible for another lookup.
+
+        :param limit: The maximum number of rows to return.
+        """
+        assert self.database is not None
+        rows = await self.database.get_rows_from_query(
+            f"SELECT artist_key, artist_name, resolved_at FROM {DB_TABLE_GENOME_ARTIST_META} "
+            "WHERE resolve_state = :error "
+            "ORDER BY resolved_at DESC",
+            {"error": RESOLVE_STATE_ERROR},
+            limit=limit,
+        )
+        return [
+            {
+                "artist_key": row["artist_key"],
+                "artist_name": row["artist_name"],
+                "resolved_at": row["resolved_at"],
+            }
+            for row in rows
+        ]
 
     async def mark_popularity_attempted(self, artist_keys: Sequence[str]) -> None:
         """

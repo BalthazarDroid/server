@@ -381,6 +381,59 @@ async def test_pending_artist_keys_holds_off_a_repeatedly_failing_artist(tmp_pat
         await store.close()
 
 
+async def test_failed_artist_keys_returns_newest_attempt_first(tmp_path: Path) -> None:
+    """`failed_artist_keys` lists `error`-state artists, most recently attempted first."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "a", "artist_name": "Artist A"}], state=RESOLVE_STATE_ERROR
+        )
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "b", "artist_name": "Artist B"}], state=RESOLVE_STATE_ERROR
+        )
+        assert store.database is not None
+        # force distinct resolved_at values so ordering is unambiguous
+        await store.database.execute(
+            f"UPDATE {DB_TABLE_GENOME_ARTIST_META} SET resolved_at = 100 WHERE artist_key = 'a'"
+        )
+        await store.database.execute(
+            f"UPDATE {DB_TABLE_GENOME_ARTIST_META} SET resolved_at = 200 WHERE artist_key = 'b'"
+        )
+        failed = await store.failed_artist_keys()
+        assert [row["artist_key"] for row in failed] == ["b", "a"]
+        assert failed[0]["artist_name"] == "Artist B"
+        assert failed[0]["resolved_at"] == 200
+    finally:
+        await store.close()
+
+
+async def test_failed_artist_keys_excludes_other_states(tmp_path: Path) -> None:
+    """Only `error`-state rows are unresolved failures - pending/ok/not_found are not."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.add_listens([_listen()], listener="household")  # pending
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "resolved-artist", "artist_name": "Resolved Artist"}], state="ok"
+        )
+        assert await store.failed_artist_keys() == []
+    finally:
+        await store.close()
+
+
+async def test_failed_artist_keys_respects_limit(tmp_path: Path) -> None:
+    """`limit` caps the number of rows returned."""
+    store = await _new_store(tmp_path)
+    try:
+        for i in range(3):
+            await store.upsert_artist_meta_full(
+                [{"artist_key": f"artist-{i}", "artist_name": f"Artist {i}"}],
+                state=RESOLVE_STATE_ERROR,
+            )
+        assert len(await store.failed_artist_keys(limit=2)) == 2
+    finally:
+        await store.close()
+
+
 async def test_pending_artist_keys_retries_a_failure_once_cooled_off(tmp_path: Path) -> None:
     """A cooldown is a delay, not a grave: the artist comes back round eventually."""
     store = await _new_store(tmp_path)
