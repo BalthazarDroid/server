@@ -258,7 +258,7 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
             params={"count": str(sample)},
         )
         await _pace()
-        artists = top_artists.get("payload", {}).get("artists", [])
+        artists = _unwrap(top_artists, "artists")
         mbids = [a["artist_mbid"] for a in artists if a.get("artist_mbid")]
         popularity_by_mbid: dict[str, dict[str, Any]] = {}
         for batch_start in range(0, len(mbids), 50):
@@ -268,8 +268,9 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
                 f"{LISTENBRAINZ_BASE_URL}/1/popularity/artist",
                 json={"artist_mbids": batch},
             )
-            for item in popularity.get("payload", []):
-                popularity_by_mbid[item["artist_mbid"]] = item
+            for item in _unwrap(popularity):
+                if item.get("artist_mbid"):
+                    popularity_by_mbid[item["artist_mbid"]] = item
             await _pace()
 
         for artist in artists:
@@ -298,6 +299,34 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
                 }
             )
     return records
+
+
+def _unwrap(response: Any, key: str | None = None) -> list[dict[str, Any]]:
+    """
+    Pull the list of records out of a ListenBrainz response, whatever envelope it arrived in.
+
+    The two endpoints this script uses do not agree with each other. ``/1/stats/sitewide/artists``
+    answers ``{"payload": {"artists": [...]}}`` while ``/1/popularity/artist`` answers a bare
+    JSON array, and assuming the first shape for both crashed the live fetch on an
+    ``AttributeError`` after it had already spent a minute on the network. Accepting all three
+    shapes costs nothing and means an envelope change upstream degrades to an empty result
+    rather than a traceback.
+
+    :param response: The decoded JSON body.
+    :param key: The key holding the list when the payload is an object rather than a list.
+    """
+    if isinstance(response, list):
+        return [item for item in response if isinstance(item, dict)]
+    if not isinstance(response, dict):
+        return []
+    payload = response.get("payload", response)
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict) and key:
+        inner = payload.get(key, [])
+        if isinstance(inner, list):
+            return [item for item in inner if isinstance(item, dict)]
+    return []
 
 
 async def _get_json(session: Any, url: str, *, params: dict[str, str] | None = None) -> Any:
