@@ -75,6 +75,11 @@ LIVE_RETRY_BACKOFF_SECONDS = 2.0
 # 429 and 5xx are worth another attempt. A 404 or a 400 is not - the request itself is wrong,
 # and repeating it just spends someone else's rate limit to get the same answer.
 LIVE_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# How much of the sample may fail to resolve before the run is treated as blocked rather than
+# unlucky. MusicBrainz answers 503 when it is rate-limiting, so a burst of them means "slow
+# down", but a steady stream of them means something systemic and retrying is just rude.
+MAX_LIVE_FAILURE_RATE = 0.2
+MIN_LIVE_FAILURES = 20
 # MusicBrainz requires a User-Agent identifying the application and giving a contact address,
 # and refuses anonymous clients. aiohttp sends only its own by default, which is exactly the
 # anonymous client that policy is aimed at.
@@ -292,17 +297,35 @@ async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> l
                     popularity_by_mbid[item["artist_mbid"]] = item
             await _pace()
 
-        for artist in artists:
-            mbid = artist.get("artist_mbid")
-            if not mbid:
-                continue
+        wanted = [a for a in artists if a.get("artist_mbid")]
+        skipped = 0
+        for index, artist in enumerate(wanted, start=1):
+            mbid = artist["artist_mbid"]
             popularity = popularity_by_mbid.get(mbid, {})
-            lookup = await _get_json(
-                session,
-                f"{mb_base_url}/artist/{mbid}",
-                params={"inc": "tags+genres", "fmt": "json"},
-            )
+            try:
+                lookup = await _get_json(
+                    session,
+                    f"{mb_base_url}/artist/{mbid}",
+                    params={"inc": "tags+genres", "fmt": "json"},
+                )
+            except OSError as err:
+                # One artist that will not resolve must not cost the other 1499. A baseline
+                # built from most of the sample is still a usable baseline; a run that dies
+                # 30 minutes in yields nothing at all, which is what used to happen.
+                skipped += 1
+                print(f"  skipped {mbid}: {err}")
+                if skipped > max(MIN_LIVE_FAILURES, len(wanted) * MAX_LIVE_FAILURE_RATE):
+                    msg = (
+                        f"Gave up after {skipped} failed artist lookups out of {index} tried. "
+                        "That is a rate limit or a block, not bad luck - wait a while, or pass "
+                        "--mb-base-url to use a different MusicBrainz host."
+                    )
+                    raise OSError(msg) from err
+                await _pace()
+                continue
             await _pace()
+            if index % 100 == 0:
+                print(f"  {index}/{len(wanted)} artists resolved ({skipped} skipped)")
             life_span = lookup.get("life-span") or {}
             begin = life_span.get("begin")
             records.append(
@@ -317,6 +340,10 @@ async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> l
                     "first_release_year": int(begin[:4]) if begin and begin[:4].isdigit() else None,
                 }
             )
+    if skipped:
+        print(
+            f"Resolved {len(records)} artists; {skipped} could not be looked up and were skipped."
+        )
     return records
 
 
@@ -378,7 +405,10 @@ async def _request_json(
             async with session.request(method, url, params=params, json=json_body) as response:
                 if response.status in LIVE_RETRY_STATUSES:
                     last_status = response.status
-                    raise _TransientFetchError(response.status)
+                    # A server telling us exactly how long to wait knows better than our own
+                    # backoff curve does; MusicBrainz sends this when it is rate-limiting.
+                    retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+                    raise _TransientFetchError(response.status, retry_after)
                 if response.status >= 400:
                     # Raised directly rather than via raise_for_status(), whose
                     # ClientResponseError is an aiohttp.ClientError and would therefore be
@@ -393,8 +423,10 @@ async def _request_json(
                 msg = f"{method} {url} failed after {attempt} attempts ({detail})"
                 raise OSError(msg) from err
             # Back off further each time: a server shedding load needs longer, not the same
-            # interval again.
-            await asyncio.sleep(LIVE_RETRY_BACKOFF_SECONDS * attempt)
+            # interval again. Growing by the square rather than linearly because the linear
+            # curve topped out at 6 seconds, which a rate limiter does not even notice.
+            hinted = getattr(err, "retry_after", None)
+            await asyncio.sleep(hinted or LIVE_RETRY_BACKOFF_SECONDS * attempt**2)
     # Unreachable: the final attempt either returns or raises.
     raise OSError(f"{method} {url} failed")
 
@@ -402,10 +434,34 @@ async def _request_json(
 class _TransientFetchError(Exception):
     """A response worth retrying. Carries only the status - never the URL, which has a key."""
 
-    def __init__(self, status: int) -> None:
-        """:param status: The HTTP status that triggered the retry."""
+    def __init__(self, status: int, retry_after: float | None = None) -> None:
+        """
+        Record a retryable response.
+
+        :param status: The HTTP status that triggered the retry.
+        :param retry_after: Seconds the server asked us to wait, if it said.
+        """
         super().__init__(f"HTTP {status}")
         self.status = status
+        self.retry_after = retry_after
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """
+    Read a ``Retry-After`` header expressed in seconds.
+
+    :param value: The raw header value, or None when the server did not send one.
+    """
+    if not value:
+        return None
+    try:
+        seconds = float(value.strip())
+    except ValueError:
+        # The header may also carry an HTTP-date. Falling back to our own backoff is better
+        # than parsing dates to save a second or two.
+        return None
+    # A server asking for an implausibly long wait is more likely misconfigured than serious.
+    return min(seconds, 60.0) if seconds > 0 else None
 
 
 async def _post_json(session: Any, url: str, *, json: Any) -> Any:

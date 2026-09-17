@@ -68,9 +68,10 @@ def test_unwrap_needs_a_key_to_reach_into_a_keyed_payload() -> None:
 class _FakeResponse:
     """Minimal stand-in for an aiohttp response."""
 
-    def __init__(self, status: int, body: Any) -> None:
+    def __init__(self, status: int, body: Any, headers: dict[str, str] | None = None) -> None:
         self.status = status
         self._body = body
+        self.headers = headers or {}
 
     async def __aenter__(self) -> Self:
         return self
@@ -178,3 +179,62 @@ def test_default_musicbrainz_host_is_not_the_music_assistant_mirror() -> None:
 def test_pacing_respects_the_documented_courtesy_limit() -> None:
     """MusicBrainz documents ~1 req/sec; the delay is a ceiling, not a target."""
     assert build_genome_baseline.LIVE_REQUEST_DELAY_SECONDS >= 1.0
+
+
+def test_parse_retry_after_reads_seconds() -> None:
+    """MusicBrainz sends a plain seconds value when it is rate-limiting."""
+    assert build_genome_baseline._parse_retry_after("5") == 5.0
+    assert build_genome_baseline._parse_retry_after(" 2.5 ") == 2.5
+
+
+def test_parse_retry_after_ignores_what_it_cannot_use() -> None:
+    """An HTTP-date or junk falls back to the script's own backoff rather than failing."""
+    assert build_genome_baseline._parse_retry_after(None) is None
+    assert build_genome_baseline._parse_retry_after("") is None
+    assert build_genome_baseline._parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT") is None
+    assert build_genome_baseline._parse_retry_after("0") is None
+    assert build_genome_baseline._parse_retry_after("-3") is None
+
+
+def test_parse_retry_after_caps_an_implausible_wait() -> None:
+    """A server asking for an hour is likelier misconfigured than serious."""
+    assert build_genome_baseline._parse_retry_after("99999") == 60.0
+
+
+async def test_request_json_waits_as_long_as_the_server_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A server that states its own interval knows better than our backoff curve."""
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(build_genome_baseline.asyncio, "sleep", _fake_sleep)
+    session = _FakeSession(
+        [_FakeResponse(503, None, {"Retry-After": "7"}), _FakeResponse(200, {"ok": True})]
+    )
+    assert await _request_json(session, "GET", "https://example.invalid/x") == {"ok": True}
+    assert slept == [7.0]
+
+
+async def test_request_json_backs_off_harder_each_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The backoff grows by the square, not linearly.
+
+    A linear curve topped out at six seconds across four attempts, which a rate limiter does
+    not notice; every attempt then failed the same way and the run was lost.
+    """
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(build_genome_baseline.asyncio, "sleep", _fake_sleep)
+    session = _FakeSession([_FakeResponse(503, None)] * build_genome_baseline.LIVE_MAX_ATTEMPTS)
+    with pytest.raises(OSError, match="after 4 attempts"):
+        await _request_json(session, "GET", "https://example.invalid/x")
+    assert slept == sorted(slept)
+    assert slept[-1] > slept[0]
