@@ -30,7 +30,46 @@ LISTENER_HOUSEHOLD: Final[str] = "household"
 # that module is written, so nothing downstream needs to change.
 ENGINE_VERSION: Final[str] = "1.0.0"
 BASELINE_VERSION: Final[str] = "v1-2026-09"
-GENOME_RESULT_SCHEMA_VERSION: Final[int] = 6  # 6: added GenomeStats.unresolved_dismissed
+GENOME_RESULT_SCHEMA_VERSION: Final[int] = 7  # 7: added GenreShare.baseline_known
+
+# --- baseline comparability (§3.6) ----------------------------------------------------
+# The reference distribution is sampled from ListenBrainz's sitewide most-listened artists,
+# so it is inherently mainstream: whole genres (ambient, funk, latin, klezmer, polka, field
+# recording) carry a share of exactly 0.0 in a real 993-artist sample, and a dozen more sit
+# far below a tenth of a percent. That is an absence of evidence, not evidence of absence -
+# but `share / max(baseline_share, 1e-6)` turns it into a clamped 99.0 and the UI renders
+# "ambient 99x average", which is a claim about the household's taste made entirely out of
+# missing reference data.
+#
+# The sample is ~1000 artists, so a single artist's entire weight is ~0.001 of it. A genre
+# whose baseline share falls below that is backed by less than one artist's worth of
+# observations and cannot support a ratio at all; at or above it there is at least one real
+# artist standing behind the figure. Genres are therefore split at exactly that point.
+GENOME_BASELINE_MIN_COMPARABLE_SHARE: Final[float] = 0.001
+
+# The `ratio` reported for a genre the baseline cannot speak to. Deliberately 0.0 rather than
+# the raw quotient: it sorts to the BOTTOM of any ranking that forgets to check
+# `GenreShare.baseline_known` and fails every "over-expressed" threshold, so a consumer that
+# ignores the flag under-claims instead of inventing a headline chip. `share` and
+# `baseline_share` on the same row keep their true measured values either way.
+GENOME_INCOMPARABLE_RATIO: Final[float] = 0.0
+
+# Whether a genre the baseline cannot speak to still carries its Jensen-Shannon
+# `contribution` (which is what the frontend ranks to pick the lit rungs on the DNA molecule).
+#
+# True on purpose. Unlike `ratio`, which divides by a baseline that may be zero and so
+# explodes on missing data, a zero-baseline genre's JS term is exactly `0.5 * share` - bounded
+# by the household's own listening. Every row is then divided by the same `jsd`, so ranking
+# genres by `contribution` is exactly ranking them by those bounded terms: a genre only
+# outranks another when the household really does listen to more of it. (The normalized value
+# CAN still be large for a small genre when the rest of the household happens to match the
+# baseline closely - but that is a true statement about where its divergence comes from, not
+# an artifact.) The headline divergence score already sums these same terms, so zeroing them
+# here would make the published decomposition disagree with the number it decomposes, and
+# would strip the molecule of exactly the genres that characterise a household listening
+# outside the mainstream reference.
+# Flip to False to exclude them; `_genre_shares` is the single place that reads it.
+GENOME_INCOMPARABLE_KEEPS_CONTRIBUTION: Final[bool] = True
 
 # --- recency weighting defaults (§3.5) ----------------------------------------------
 

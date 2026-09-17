@@ -65,6 +65,10 @@ def test_unwrap_needs_a_key_to_reach_into_a_keyed_payload() -> None:
     assert _unwrap({"payload": {"artists": [{"artist_mbid": "f"}]}}) == []
 
 
+async def _no_pace() -> None:
+    """Skip the courtesy delay; these tests exercise paging, not politeness."""
+
+
 class _FakeResponse:
     """Minimal stand-in for an aiohttp response."""
 
@@ -238,3 +242,79 @@ async def test_request_json_backs_off_harder_each_attempt(
         await _request_json(session, "GET", "https://example.invalid/x")
     assert slept == sorted(slept)
     assert slept[-1] > slept[0]
+
+
+class _PagingSession:
+    """Serves a fixed pool of artists through the sitewide endpoint's paging contract."""
+
+    def __init__(self, pool: int, page_limit: int | None = None) -> None:
+        self.pool = pool
+        self.page_limit = page_limit or build_genome_baseline.LISTENBRAINZ_PAGE_LIMIT
+        self.requests: list[tuple[int, int]] = []
+
+    def request(self, _method: str, _url: str, **kwargs: Any) -> Any:
+        params = kwargs.get("params") or {}
+        count = int(params.get("count", 25))
+        offset = int(params.get("offset", 0))
+        self.requests.append((count, offset))
+        served = min(count, self.page_limit, max(0, self.pool - offset))
+        artists = [
+            {"artist_mbid": f"mbid-{offset + i}", "artist_name": f"Artist {offset + i}"}
+            for i in range(served)
+        ]
+        return _FakeResponse(200, {"payload": {"artists": artists}})
+
+
+async def test_top_artists_pages_past_the_per_request_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The bug this exists for.
+
+    A --sample of 1500 came back with 993, because the endpoint serves at most 1000 per
+    request and says nothing about it - the run looked complete rather than truncated.
+    """
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+    session = _PagingSession(pool=5000)
+    got = await build_genome_baseline._fetch_top_artists(session, 2500)
+    assert len(got) == 2500
+    assert len({a["artist_mbid"] for a in got}) == 2500
+    assert len(session.requests) > 1
+
+
+async def test_top_artists_stops_when_the_endpoint_runs_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Asking for more than exists must end, not loop on an endlessly short page."""
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+    session = _PagingSession(pool=1200)
+    got = await build_genome_baseline._fetch_top_artists(session, 5000)
+    assert len(got) == 1200
+
+
+async def test_top_artists_needs_only_one_request_for_a_small_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sample inside the ceiling must not pay for a second round trip."""
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+    session = _PagingSession(pool=5000)
+    got = await build_genome_baseline._fetch_top_artists(session, 400)
+    assert len(got) == 400
+    assert len(session.requests) == 1
+    assert session.requests[0] == (400, 0)
+
+
+async def test_top_artists_discards_duplicates_across_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An endpoint that ignores offset would otherwise inflate the sample with repeats."""
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+
+    class _IgnoresOffset(_PagingSession):
+        def request(self, method: str, url: str, **kwargs: Any) -> Any:
+            kwargs["params"] = {**(kwargs.get("params") or {}), "offset": "0"}
+            return super().request(method, url, **kwargs)
+
+    session = _IgnoresOffset(pool=5000)
+    got = await build_genome_baseline._fetch_top_artists(session, 2500)
+    assert len({a["artist_mbid"] for a in got}) == len(got)

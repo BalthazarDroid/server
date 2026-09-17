@@ -51,6 +51,9 @@ GENRE_MAPPING_PATH = (
 )
 
 LISTENBRAINZ_BASE_URL = "https://api.listenbrainz.org"
+# The sitewide endpoint's per-request ceiling. Asking for more returns this many without
+# complaint, which is why a --sample of 1500 quietly produced a 993-artist baseline.
+LISTENBRAINZ_PAGE_LIMIT = 1000
 # MusicBrainz proper, not the Music Assistant mirror the SERVER uses.
 #
 # The mirror exists so that running MA instances can resolve metadata cheaply, and it answers
@@ -276,13 +279,7 @@ async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> l
 
     records: list[dict[str, Any]] = []
     async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
-        top_artists = await _get_json(
-            session,
-            f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
-            params={"count": str(sample)},
-        )
-        await _pace()
-        artists = _unwrap(top_artists, "artists")
+        artists = await _fetch_top_artists(session, sample)
         mbids = [a["artist_mbid"] for a in artists if a.get("artist_mbid")]
         popularity_by_mbid: dict[str, dict[str, Any]] = {}
         for batch_start in range(0, len(mbids), 50):
@@ -345,6 +342,46 @@ async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> l
             f"Resolved {len(records)} artists; {skipped} could not be looked up and were skipped."
         )
     return records
+
+
+async def _fetch_top_artists(session: Any, sample: int) -> list[dict[str, Any]]:
+    """
+    Page ListenBrainz's sitewide top-artists endpoint up to ``sample`` artists.
+
+    The endpoint serves at most ``LISTENBRAINZ_PAGE_LIMIT`` per request and silently returns
+    that many however much more you ask for - a request for 1500 came back with 1000, which
+    looks like a completed run rather than a truncated one. Paging by offset is the only way
+    past it.
+
+    Stops early when a page comes back short or repeats, which is how this endpoint signals it
+    has no more to give; without that, asking for more than it holds would loop.
+
+    :param session: An open aiohttp ClientSession.
+    :param sample: How many artists are wanted in total.
+    """
+    collected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    offset = 0
+    while len(collected) < sample:
+        page_size = min(LISTENBRAINZ_PAGE_LIMIT, sample - len(collected))
+        payload = await _get_json(
+            session,
+            f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
+            params={"count": str(page_size), "offset": str(offset)},
+        )
+        await _pace()
+        page = _unwrap(payload, "artists")
+        if not page:
+            break
+        fresh = [a for a in page if (a.get("artist_mbid") or a.get("artist_name")) not in seen]
+        for artist in fresh:
+            seen.add(artist.get("artist_mbid") or artist.get("artist_name"))
+        collected.extend(fresh)
+        print(f"  fetched {len(collected)} artists from ListenBrainz")
+        if len(page) < page_size or not fresh:
+            break
+        offset += len(page)
+    return collected[:sample]
 
 
 def _unwrap(response: Any, key: str | None = None) -> list[dict[str, Any]]:

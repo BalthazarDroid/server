@@ -65,25 +65,36 @@ def divergent_genres(genome: GenomeResult | None, *, limit: int = 5) -> list[Div
     """
     Return the genres the household over-expresses most, strongest first.
 
-    Reuses the engine's own divergence decomposition rather than recomputing anything:
-    ``divergence.top_over`` is already the per-genre Jensen-Shannon contribution, sorted, and
-    D-06 is explicit that those terms are the mathematically real attribution of the headline
-    score to individual genres.
+    Reuses the engine's own divergence decomposition rather than recomputing anything: each
+    row's ``contribution`` is its per-genre Jensen-Shannon term, and D-06 is explicit that
+    those terms are the mathematically real attribution of the headline score to individual
+    genres.
+
+    Ranked from ``genres`` rather than from ``divergence.top_over``, which excludes genres the
+    baseline sample cannot speak to (see ``GenreShare.baseline_known``). Those exclusions are
+    right for the "Nx average" chips, which publish a ratio, but wrong here: a household's
+    least-mainstream genres are exactly the ones with no baseline weight, and dropping them
+    would steer discovery away from the corners of the library it exists to surface.
 
     :param genome: A cached :class:`GenomeResult`, or ``None`` when none has been built yet.
     :param limit: The maximum number of genres to return.
     """
     if not genome:
         return []
-    top_over = genome.get("divergence", {}).get("top_over") or []
+    over = [
+        share
+        for share in genome.get("genres") or []
+        if share.get("key")
+        and float(share.get("share") or 0.0) > float(share.get("baseline_share") or 0.0)
+    ]
+    over.sort(key=lambda share: float(share.get("contribution") or 0.0), reverse=True)
     return [
         DivergentGenre(
             key=str(share["key"]),
             label=str(share.get("label") or share["key"]),
             contribution=float(share.get("contribution") or 0.0),
         )
-        for share in top_over[:limit]
-        if share.get("key")
+        for share in over[:limit]
     ]
 
 

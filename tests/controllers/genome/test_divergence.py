@@ -47,12 +47,27 @@ def test_js_contributions_all_zero_when_one_side_empty() -> None:
 
 
 def test_divergence_facts_ratio_is_clamped() -> None:
-    """Test divergence facts ratio is clamped."""
+    """A comparable genre the household plays far more than average still clamps at 99x."""
+    p = {"niche": 0.5, "rock": 0.5}
+    q = {"niche": 0.0012, "rock": 0.5}
+    facts = engine.divergence_facts(p, q, {"niche": "Niche", "rock": "Rock"})
+    niche = next(s for s in facts["top_over"] if s["key"] == "niche")
+    assert niche["baseline_known"] is True
+    assert niche["ratio"] == 99.0
+
+
+def test_divergence_facts_drops_a_genre_the_baseline_never_saw() -> None:
+    """
+    A baseline share of ~0 is an absence of reference data, so the genre earns no chip.
+
+    The previous behaviour reported ratio 99.0 here, which read as a finding about the
+    household rather than what it was: no reference data for the genre at all.
+    """
     p = {"niche": 0.5, "rock": 0.5}
     q = {"niche": 1e-9, "rock": 0.5}
     facts = engine.divergence_facts(p, q, {"niche": "Niche", "rock": "Rock"})
-    niche = next(s for s in facts["top_over"] if s["key"] == "niche")
-    assert niche["ratio"] == 99.0
+    assert "niche" not in {s["key"] for s in facts["top_over"]}
+    assert "niche" not in {s["key"] for s in facts["top_under"]}
 
 
 def test_divergence_facts_percent_matches_score() -> None:

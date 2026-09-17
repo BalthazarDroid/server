@@ -50,12 +50,39 @@ def _genome(**overrides: Any) -> GenomeResult:
         "divergence": {
             "score": 0.42,
             "percent": 42,
+            # `ambient` is absent here on purpose: it has no baseline weight, so the engine
+            # keeps it out of the chip lists. Discovery must still rank it.
             "top_over": [
-                {"key": "ambient", "label": "Ambient", "contribution": 0.31},
                 {"key": "rock", "label": "Rock", "contribution": 0.12},
             ],
             "top_under": [],
         },
+        "genres": [
+            {
+                "key": "ambient",
+                "label": "Ambient",
+                "share": 0.4,
+                "baseline_share": 0.0,
+                "baseline_known": False,
+                "contribution": 0.31,
+            },
+            {
+                "key": "rock",
+                "label": "Rock",
+                "share": 0.3,
+                "baseline_share": 0.2,
+                "baseline_known": True,
+                "contribution": 0.12,
+            },
+            {
+                "key": "metal",
+                "label": "Metal",
+                "share": 0.05,
+                "baseline_share": 0.11,
+                "baseline_known": True,
+                "contribution": 0.09,
+            },
+        ],
         "top_artists": [
             {"name": "Sigur Rós", "artist_key": "sigurros", "genres": ["rock", "ambient"]},
             {"name": "AC/DC", "artist_key": "acdc", "genres": ["metal"]},
@@ -138,7 +165,7 @@ def _wire(
 
 
 def test_divergent_genres_reuses_the_engines_own_decomposition() -> None:
-    """The divergent genres are the engine's `divergence.top_over` terms, in its own order."""
+    """The divergent genres are the engine's own JS contribution terms, strongest first."""
     genres = divergent_genres(_genome())
     assert [(g.key, g.label) for g in genres] == [("ambient", "Ambient"), ("rock", "Rock")]
     assert genres[0].contribution == pytest.approx(0.31)
@@ -332,7 +359,7 @@ async def test_discovery_with_no_divergent_genres_is_empty(
 ) -> None:
     """A household indistinguishable from the baseline has no corners to point at."""
     genome_store.cache["household"] = _genome(
-        divergence={"score": 0.0, "percent": 0, "top_over": [], "top_under": []}
+        divergence={"score": 0.0, "percent": 0, "top_over": [], "top_under": []}, genres=[]
     )
     _wire(genome_controller, api_key=_API_KEY)
 
@@ -621,7 +648,7 @@ async def test_background_pass_with_no_seeds_still_finishes(
 ) -> None:
     """A household with no divergent genres gets a completed, empty pass — never a stuck one."""
     genome_store.cache["household"] = _genome(
-        divergence={"score": 0.0, "percent": 0, "top_over": [], "top_under": []}
+        divergence={"score": 0.0, "percent": 0, "top_over": [], "top_under": []}, genres=[]
     )
     _wire(genome_controller, api_key=_API_KEY, client=_ExplodingHttpClient())
 

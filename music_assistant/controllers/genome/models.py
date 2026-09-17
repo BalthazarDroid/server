@@ -112,9 +112,25 @@ class GenreShare(TypedDict):
     """
     One genre's share of household listening versus the baseline.
 
+    ``baseline_known`` says whether the reference sample holds enough observations of this
+    genre to be compared against at all (see
+    ``constants.GENOME_BASELINE_MIN_COMPARABLE_SHARE``). The reference is sampled from the
+    globally most-listened artists, so genres that never chart there — ambient, klezmer,
+    field recording — legitimately have no baseline weight, which is "we have no reference
+    data", not "the household plays this infinitely more than average".
+
     ``ratio`` (``share / max(baseline_share, 1e-6)``, clamped to 99.0) is present on every
     row — the "Listening Genome" visual's per-genre Overexpressed/Stable/Underexpressed status
-    is derived from it client-side; the server does not invent the thresholds.
+    is derived from it client-side; the server does not invent the thresholds. **It carries no
+    meaning when ``baseline_known`` is False**, where it is reported as
+    ``constants.GENOME_INCOMPARABLE_RATIO`` (0.0) rather than the raw quotient, so a consumer
+    that forgets to check the flag under-claims instead of publishing a "99x average" chip
+    built out of missing data. ``share`` and ``baseline_share`` are always the true measured
+    values, on comparable and incomparable rows alike.
+
+    ``contribution`` is *not* suppressed on an incomparable row: unlike ``ratio`` it is bounded
+    by the household's own listening, and the headline divergence score sums the very same
+    terms — see ``constants.GENOME_INCOMPARABLE_KEEPS_CONTRIBUTION``.
 
     ``base_mix`` supports the "four bases" DNA visual (see ``GenomeResult.bases``): for a
     non-base genre it is that genre's affinity to each of the (up to four) base genres, as
@@ -130,6 +146,7 @@ class GenreShare(TypedDict):
     share: float
     baseline_share: float
     ratio: float
+    baseline_known: bool
     contribution: float
     base_mix: list[float]
 

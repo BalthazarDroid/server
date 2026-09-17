@@ -35,6 +35,11 @@ Ambiguities resolved (§3.6 leaves these open; simplest/most defensible reading 
   genre's affinity to each base) is computed by :func:`base_mix_for_genres` from the same
   ``listens``/``artist_meta`` the rest of the engine already has in hand; see that function's
   docstring for the degenerate cases (single-genre artists, zero overlap, unenriched artists).
+- ``GenreShare.baseline_known`` marks a genre the reference sample cannot speak to at all.
+  §3.6 assumes every genre has a usable baseline share; a real ListenBrainz baseline has 20 of
+  59 genres at exactly 0.0, which the old unconditional ratio turned into a "99x average"
+  claim. ``divergence_facts`` drops those rows; ``contribution`` deliberately keeps them. See
+  ``constants.GENOME_BASELINE_MIN_COMPARABLE_SHARE`` and its two companions.
 """
 
 from __future__ import annotations
@@ -46,7 +51,13 @@ from typing import TYPE_CHECKING
 
 from music_assistant.constants import DEFAULT_GENRE_MAPPING
 
-from .constants import ENGINE_VERSION, GENOME_RESULT_SCHEMA_VERSION
+from .constants import (
+    ENGINE_VERSION,
+    GENOME_BASELINE_MIN_COMPARABLE_SHARE,
+    GENOME_INCOMPARABLE_KEEPS_CONTRIBUTION,
+    GENOME_INCOMPARABLE_RATIO,
+    GENOME_RESULT_SCHEMA_VERSION,
+)
 from .models import (
     ArtistFact,
     DivergenceFacts,
@@ -230,7 +241,11 @@ def divergence_facts(
     # genre as "under" simply because the household side is all zeros.
     if sum(p.values()) <= 0 or sum(q.values()) <= 0:
         return DivergenceFacts(score=0.0, percent=0, top_over=[], top_under=[])
-    shares = _genre_shares(p, q, terms, jsd, labels)
+    # These two lists drive the "Nx average" chips, which read `ratio` - so a genre the
+    # baseline cannot speak to is excluded outright rather than published with a meaningless
+    # ratio. Both lists legitimately come back empty for a household whose listening sits
+    # entirely in unmeasured genres; the frontend already renders nothing in that case.
+    shares = [s for s in _genre_shares(p, q, terms, jsd, labels) if s["baseline_known"]]
     top_over = sorted(
         (s for s in shares if s["share"] > s["baseline_share"]),
         key=lambda s: s["contribution"],
@@ -714,8 +729,18 @@ def _genre_shares(
     for key in sorted(set(p) | set(q)):
         share = p.get(key, 0.0)
         baseline_share = q.get(key, 0.0)
-        ratio = min(share / max(baseline_share, 1e-6), 99.0)
+        # A baseline share under the comparability floor is an absence of reference data, not
+        # a measurement of rarity, so no ratio may be computed from it - see
+        # GENOME_BASELINE_MIN_COMPARABLE_SHARE for the floor's derivation.
+        baseline_known = baseline_share >= GENOME_BASELINE_MIN_COMPARABLE_SHARE
+        ratio = (
+            min(share / max(baseline_share, 1e-6), 99.0)
+            if baseline_known
+            else GENOME_INCOMPARABLE_RATIO
+        )
         contribution = terms.get(key, 0.0) / jsd if jsd > 1e-9 else 0.0
+        if not baseline_known and not GENOME_INCOMPARABLE_KEEPS_CONTRIBUTION:
+            contribution = 0.0
         shares.append(
             GenreShare(
                 key=key,
@@ -723,6 +748,7 @@ def _genre_shares(
                 share=_r4(share),
                 baseline_share=_r4(baseline_share),
                 ratio=_r4(ratio),
+                baseline_known=baseline_known,
                 contribution=_r4(contribution),
                 # filled in by ``build_genome`` for the main ``genres`` list only (§ DNA visual);
                 # left empty here since this helper also builds ``divergence_facts``'s
@@ -766,6 +792,7 @@ def _with_base_mix(share: GenreShare, base_mix: list[float]) -> GenreShare:
         share=share["share"],
         baseline_share=share["baseline_share"],
         ratio=share["ratio"],
+        baseline_known=share["baseline_known"],
         contribution=share["contribution"],
         base_mix=base_mix,
     )

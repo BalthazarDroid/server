@@ -555,11 +555,12 @@ def test_build_genome_full_result_shape_is_stable() -> None:
     result = engine.build_genome(inputs)
     # Pinned as a literal on purpose: adding or removing a GenomeResult field must force
     # this number up, because the cache discards blobs recorded at any other version.
-    assert result["schema_version"] == 6
+    assert result["schema_version"] == 7
     assert result["engine_version"] == engine.ENGINE_VERSION
     assert result["listener"] == "household"
     assert result["stats"]["total_listens"] == 1
     assert result["genres"][0]["key"] == "rock"
+    assert result["genres"][0]["baseline_known"] is True
     assert result["top_artists"][0]["artist_key"] == "a"
     assert result["players"][0]["player_id"] == "kitchen"
 
@@ -766,3 +767,150 @@ def test_base_genre_rows_carry_empty_base_mix() -> None:
     result = engine.build_genome(inputs)
     assert result["bases"][0]["key"] == "rock"
     assert result["bases"][0]["base_mix"] == []
+
+
+# ---------------------------------------------------------------------------------------
+# Baseline comparability: a genre the reference sample cannot speak to
+# ---------------------------------------------------------------------------------------
+
+_LABELS = {"ambient": "Ambient", "rock": "Rock", "pop": "Pop"}
+
+
+def test_genre_with_zero_baseline_is_not_comparable() -> None:
+    """A genre absent from the reference sample must never claim a 99x ratio."""
+    p = {"ambient": 0.5, "rock": 0.5}
+    q = {"ambient": 0.0, "rock": 1.0}
+    shares = {
+        s["key"]: s for s in engine._genre_shares(p, q, engine.js_contributions(p, q), 1.0, _LABELS)
+    }
+    ambient = shares["ambient"]
+    assert ambient["baseline_known"] is False
+    assert ambient["ratio"] == 0.0
+    # the measured facts are untouched — only the derived comparison is withheld
+    assert ambient["share"] == 0.5
+    assert ambient["baseline_share"] == 0.0
+
+
+def test_incomparable_genre_is_absent_from_divergence_chip_lists() -> None:
+    """`top_over`/`top_under` drive the "Nx average" chips, so an unmeasured genre is dropped."""
+    p = {"ambient": 0.5, "rock": 0.2, "pop": 0.3}
+    q = {"rock": 0.6, "pop": 0.4}
+    facts = engine.divergence_facts(p, q, _LABELS)
+    assert "ambient" not in {s["key"] for s in facts["top_over"]}
+    assert "ambient" not in {s["key"] for s in facts["top_under"]}
+    assert {s["key"] for s in facts["top_over"]} | {s["key"] for s in facts["top_under"]} == {
+        "rock",
+        "pop",
+    }
+    assert all(s["baseline_known"] for s in facts["top_over"] + facts["top_under"])
+
+
+def test_divergence_chip_lists_may_both_be_empty() -> None:
+    """
+    Both chip lists empty is a legitimate state, not a bug to paper over with a fake entry.
+
+    The limiting case: every genre the reference sample carries sits below the comparability
+    floor, so there is nothing anywhere in the result that may honestly be given a ratio.
+    """
+    facts = engine.divergence_facts({"ambient": 1.0}, {"ambient": 0.0005, "rock": 0.0005}, _LABELS)
+    assert facts["top_over"] == []
+    assert facts["top_under"] == []
+    assert facts["score"] > 0.0
+
+
+def test_incomparable_genre_still_leaves_comparable_ones_in_the_chip_lists() -> None:
+    """Dropping unmeasured genres must not empty a list that has real genres to show."""
+    facts = engine.divergence_facts({"ambient": 1.0}, {"ambient": 0.0, "rock": 1.0}, _LABELS)
+    assert facts["top_over"] == []
+    assert [s["key"] for s in facts["top_under"]] == ["rock"]
+
+
+@pytest.mark.parametrize(
+    ("baseline_share", "expected_known"),
+    [
+        (0.0, False),
+        (0.0009, False),
+        (0.001, True),
+        (0.0011, True),
+    ],
+)
+def test_comparability_floor_boundary(baseline_share: float, expected_known: bool) -> None:
+    """Pin the exact point at which a baseline share becomes comparable."""
+    p = {"ambient": 0.5, "rock": 0.5}
+    q = {"ambient": baseline_share, "rock": 1.0 - baseline_share}
+    shares = {
+        s["key"]: s for s in engine._genre_shares(p, q, engine.js_contributions(p, q), 1.0, _LABELS)
+    }
+    assert shares["ambient"]["baseline_known"] is expected_known
+
+
+def test_comparable_genre_ratio_is_unchanged_by_the_comparability_flag() -> None:
+    """A genre with a real baseline keeps exactly the ratio it had before the flag existed."""
+    p = {"rock": 0.6, "pop": 0.4}
+    q = {"rock": 0.3, "pop": 0.7}
+    shares = {
+        s["key"]: s for s in engine._genre_shares(p, q, engine.js_contributions(p, q), 1.0, _LABELS)
+    }
+    assert shares["rock"]["baseline_known"] is True
+    assert shares["rock"]["ratio"] == 2.0
+    assert shares["pop"]["ratio"] == pytest.approx(0.5714, abs=1e-4)
+
+
+def test_incomparable_genre_keeps_its_divergence_contribution() -> None:
+    """
+    The deliberate counterpart to the suppressed ratio (see GENOME_INCOMPARABLE_KEEPS_CONTRIBUTION).
+
+    `contribution` is bounded by the household's own share, and the headline score sums the
+    same terms, so a genre with no baseline keeps its term and can still light a DNA rung.
+    """
+    p = {"ambient": 0.5, "rock": 0.5}
+    q = {"ambient": 0.0, "rock": 1.0}
+    terms = engine.js_contributions(p, q)
+    jsd = sum(terms.values())
+    shares = {s["key"]: s for s in engine._genre_shares(p, q, terms, jsd, _LABELS)}
+    assert shares["ambient"]["contribution"] > 0.0
+    assert sum(s["contribution"] for s in shares.values()) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_tiny_share_in_an_unmeasured_genre_does_not_outrank_a_real_divergence() -> None:
+    """
+    The property that makes keeping `contribution` safe: it ranks by bounded JS terms.
+
+    A single play of something the baseline never saw cannot outrank a genre the household
+    genuinely over-expresses, because a zero-baseline genre's term is only `0.5 * share`.
+    """
+    p = {"ambient": 0.01, "rock": 0.6, "pop": 0.39}
+    q = {"rock": 0.2, "pop": 0.8}
+    terms = engine.js_contributions(p, q)
+    shares = {s["key"]: s for s in engine._genre_shares(p, q, terms, sum(terms.values()), _LABELS)}
+    assert shares["ambient"]["baseline_known"] is False
+    assert shares["ambient"]["contribution"] > 0.0
+    assert shares["rock"]["contribution"] > shares["ambient"]["contribution"]
+    assert shares["pop"]["contribution"] > shares["ambient"]["contribution"]
+
+
+def test_build_genome_marks_an_unmeasured_genre_and_keeps_it_out_of_the_chips() -> None:
+    """End-to-end: the full result carries the flag and the chip lists respect it."""
+    meta = {
+        "a": ArtistMeta("a", "A", None, ("ambient",), 1999, 200, 2000),
+        "b": ArtistMeta("b", "B", None, ("rock",), 1999, 200, 2000),
+    }
+    inputs = _inputs(
+        [
+            _listen(artist_key="a", artist_name="A", track_key="t1"),
+            _listen(artist_key="b", artist_name="B", track_key="t2"),
+        ],
+        artist_meta=meta,
+        baseline=_baseline(genre_shares={"rock": 0.5, "pop": 0.5}),
+    )
+    result = engine.build_genome(inputs)
+    by_key = {share["key"]: share for share in result["genres"]}
+    assert by_key["ambient"]["baseline_known"] is False
+    assert by_key["ambient"]["ratio"] == 0.0
+    assert by_key["ambient"]["share"] > 0.0
+    assert by_key["ambient"]["baseline_share"] == 0.0
+    assert by_key["rock"]["baseline_known"] is True
+    assert "ambient" not in {s["key"] for s in result["divergence"]["top_over"]}
+    # still a base of the DNA visual, and still carries a divergence term
+    assert "ambient" in {base["key"] for base in result["bases"]}
+    assert by_key["ambient"]["contribution"] > 0.0
