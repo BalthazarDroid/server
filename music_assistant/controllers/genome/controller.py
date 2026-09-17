@@ -26,6 +26,7 @@ from music_assistant_models.auth import Scope
 from music_assistant_models.config_entries import ConfigActionResult, ConfigEntry
 from music_assistant_models.enums import ConfigEntryType
 from music_assistant_models.errors import InvalidDataError
+from music_assistant_models.helpers import create_safe_string
 
 from music_assistant.helpers.api import api_command
 from music_assistant.helpers.datetime import LOCAL_TIMEZONE, utc_timestamp
@@ -57,6 +58,18 @@ from .constants import (
     DEFAULT_OBSCURITY_PERCENTILE,
     DEFAULT_REBUILD_SCHEDULE_HOUR,
     DEFAULT_TOP_N,
+    DISCOVERY_STATE_PENDING,
+    DISCOVERY_STATE_READY,
+    DISCOVERY_STATE_UNAVAILABLE,
+    GENOME_DISCOVERY_COLD_LIMIT,
+    GENOME_DISCOVERY_COLD_MAX_PLAYS,
+    GENOME_DISCOVERY_LASTFM_MIN_INTERVAL_SECONDS,
+    GENOME_DISCOVERY_REFRESH_INTERVAL_HOURS,
+    GENOME_DISCOVERY_SEED_ERROR_COOLDOWN_HOURS,
+    GENOME_DISCOVERY_SEED_LIMIT,
+    GENOME_DISCOVERY_SIMILAR_PER_SEED,
+    GENOME_DISCOVERY_SUGGESTED_LIMIT,
+    GENOME_DISCOVERY_TASK_ID,
     GENOME_ENRICHMENT_BATCH_LIMIT,
     GENOME_ENRICHMENT_TASK_ID,
     GENOME_LASTFM_POLL_TASK_ID,
@@ -75,9 +88,17 @@ from .constants import (
     RESOLVE_STATE_PENDING,
     SOURCE_APPLE_EXPORT,
 )
+from .discovery import (
+    divergent_genres,
+    rank_cold_corners,
+    read_library_artists,
+    select_seeds,
+)
 from .engine import build_genome
 from .errors import LastfmNotConfiguredError
 from .models import (
+    ColdArtist,
+    DiscoveryResult,
     EngineParams,
     FailedArtist,
     GenomeImportResult,
@@ -90,10 +111,11 @@ from .models import (
     # when it registers the command, and its NameError fallback only searches
     # music_assistant_models — it cannot see this package's own types.
     GenomeSettingsPatch,
+    SuggestedArtist,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+    from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
 
     from music_assistant_models.config_entries import ConfigValueType, CoreConfig
 
@@ -184,6 +206,9 @@ class _GenomeStoreProtocol(Protocol):
     async def all_failed_artist_keys(self) -> frozenset[str]: ...
     async def dismiss_unresolved(self, artist_keys: Sequence[str]) -> None: ...
     async def unresolved_dismissed_keys(self) -> frozenset[str] | None: ...
+    async def get_cached_discovery(self, listener: str) -> dict[str, Any] | None: ...
+    async def set_cached_discovery(self, listener: str, data: Mapping[str, Any]) -> None: ...
+    async def artist_play_counts(self, listener: str) -> dict[str, int]: ...
 
 
 class _UploadState:
@@ -231,6 +256,13 @@ def _default_lastfm_importer_factory(mass: MusicAssistant, *, username: str, api
     return LastfmImporter(client, username, api_key)
 
 
+def _default_lastfm_similar_client_factory(mass: MusicAssistant) -> Any:
+    """Lazily construct the throttled HTTP client the background discovery pass fetches with."""
+    from music_assistant.controllers.genome.http import AiohttpClient  # noqa: PLC0415
+
+    return AiohttpClient(mass, rate_limit=5, period=1.0)
+
+
 def _default_playlog_importer_factory(mass: MusicAssistant, store: _GenomeStoreProtocol) -> Any:
     """Lazily construct the real MA playlog importer (live capture + one-time backfill)."""
     from music_assistant.controllers.genome.importers.ma_playlog import (  # noqa: PLC0415
@@ -269,9 +301,14 @@ class GenomeController(CoreController):
         self._lastfm_importer_factory = _default_lastfm_importer_factory
         self._playlog_importer_factory = _default_playlog_importer_factory
         self._unsubscribe_playlog: Callable[[], None] | None = None
+        self._library_artists_reader = read_library_artists
+        self._lastfm_similar_client_factory = _default_lastfm_similar_client_factory
         # serializes the daily rebuild's enrichment pass against the continuous background one
         # (§3.8, P3) so the two never issue MusicBrainz requests at the same time
         self._enrichment_lock = asyncio.Lock()
+        # the discovery pass gets its own lock: a user pressing Refresh while the daily pass is
+        # running must queue behind it rather than double the Last.fm request rate
+        self._discovery_lock = asyncio.Lock()
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """Return all Config Entries for the genome core module (§3.2)."""
@@ -378,6 +415,7 @@ class GenomeController(CoreController):
         self._register_rebuild_task()
         self._register_lastfm_poll_task()
         self._register_enrichment_task()
+        self._register_discovery_task()
         listen_count = await self.store.count_listens(LISTENER_HOUSEHOLD)
         LOGGER.info(
             "Genome controller setup complete: baseline %s, %d listens stored",
@@ -499,6 +537,69 @@ class GenomeController(CoreController):
         ):
             self.mass.create_task(self._background_enrichment())
         return result
+
+    @api_command("genome/discovery", required_scope=Scope.LIBRARY_READ)
+    @_log_command_errors("genome/discovery")
+    async def discovery(self, listener: str = LISTENER_HOUSEHOLD) -> DiscoveryResult:
+        """
+        Return artists worth trying: cold library corners plus cached Last.fm suggestions (§3.3).
+
+        Reads cache and database only, and deliberately takes no "refresh"/"enrich" flag: D-16
+        exists because a websocket read that fell through to an inline MusicBrainz pass hung the
+        page for an hour, and a flag someone can flip back is how that bug reaches a user again.
+        The Last.fm half is produced solely by the background pass
+        (:meth:`_background_discovery`); this method serves whatever that pass last stored, and
+        says so through ``suggested_state``.
+
+        The cold-corner half never falls through to a rebuild either: with no cached genome
+        there are no divergent genres to rank against, which is an honest empty state rather
+        than a reason to recompute the whole genome inside a page load.
+
+        :param listener: The listener id (``"household"`` in v1).
+        """
+        genome = await self.store.get_cached_genome(listener)
+        genres = divergent_genres(genome)
+        in_library = await self._cold_corners(listener, genres)
+        cached = await self.store.get_cached_discovery(listener)
+        generated_at = _float_or_none(cached.get("generated_at")) if cached else None
+        suggested = _suggested_from_cache(cached)
+        api_key = self.get_config_value(
+            CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
+        )
+        if not api_key:
+            state = DISCOVERY_STATE_UNAVAILABLE
+        elif generated_at is None:
+            state = DISCOVERY_STATE_PENDING
+        else:
+            state = DISCOVERY_STATE_READY
+        return DiscoveryResult(
+            in_library=in_library,
+            suggested=suggested,
+            suggested_state=state,
+            generated_at=generated_at,
+        )
+
+    @api_command("genome/discovery_refresh", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/discovery_refresh")
+    async def discovery_refresh(self, listener: str = LISTENER_HOUSEHOLD) -> bool:
+        """
+        Dispatch a background Last.fm discovery pass and return immediately (§3.3, D-16).
+
+        Returns whether a pass was dispatched at all: ``False`` means no Last.fm API key is
+        configured, which is the same normal, non-error state ``genome/discovery`` reports as
+        ``suggested_state="unavailable"``. The caller re-queries ``genome/discovery`` for the
+        result; nothing is awaited here.
+
+        :param listener: The listener id (``"household"`` in v1).
+        """
+        api_key = self.get_config_value(
+            CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
+        )
+        if not api_key:
+            LOGGER.info("Discovery refresh skipped: no Last.fm API key configured")
+            return False
+        self.mass.create_task(self._background_discovery(listener))
+        return True
 
     @api_command("genome/import_apple", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/import_apple")
@@ -812,6 +913,186 @@ class GenomeController(CoreController):
         if resolved:
             LOGGER.info("Background MusicBrainz enrichment: %d artists resolved", resolved)
 
+    def _register_discovery_task(self) -> None:
+        """
+        Register the background discovery pass (D-16).
+
+        Mirrors :meth:`_register_enrichment_task`: the only place discovery is allowed to touch
+        the network is a paced background pass, so that the read path can stay a pure
+        cache/database lookup. The cadence is deliberately slow
+        (:data:`GENOME_DISCOVERY_REFRESH_INTERVAL_HOURS`) - similar-artist graphs barely move,
+        and the seeds only change when the household's own top artists do.
+        """
+        from music_assistant_models.background_task import TaskSchedule  # noqa: PLC0415
+
+        self.mass.tasks.register_scheduled_task(
+            task_id=GENOME_DISCOVERY_TASK_ID,
+            name="Genome discovery",
+            handler=self._scheduled_discovery,
+            schedule=TaskSchedule.hourly(every=max(GENOME_DISCOVERY_REFRESH_INTERVAL_HOURS, 1)),
+            translation_key=GENOME_DISCOVERY_TASK_ID,
+            translation_owner=self.translation_owner,
+            metadata={"task_domain": GENOME_DISCOVERY_TASK_ID},
+            allow_retry=True,
+        )
+
+    async def _scheduled_discovery(self) -> None:
+        """Scheduled-task entry point: refresh the Last.fm similar-artist suggestions."""
+        await self._background_discovery(LISTENER_HOUSEHOLD)
+
+    async def _background_discovery(self, listener: str = LISTENER_HOUSEHOLD) -> None:
+        """
+        Run one discovery pass detached from any request, never raising.
+
+        A Last.fm problem must not crash the task loop or leave the stored result in a
+        half-written state: the pass writes its blob once, at the end, and the next run tries
+        again on its own.
+
+        :param listener: The listener id (``"household"`` in v1).
+        """
+        try:
+            async with self._discovery_lock:
+                await self._run_discovery_pass(listener)
+        except Exception:
+            LOGGER.warning("Background discovery pass failed", exc_info=True)
+
+    async def _run_discovery_pass(self, listener: str) -> None:
+        """
+        Fetch Last.fm similar artists for the household's divergent-genre seeds, then store them.
+
+        Held to the same three rules as the MusicBrainz pass: per-seed pacing
+        (:data:`GENOME_DISCOVERY_LASTFM_MIN_INTERVAL_SECONDS`), a persisted result so a restart
+        does not lose the work, and a recorded cooldown on failure
+        (:data:`GENOME_DISCOVERY_SEED_ERROR_COOLDOWN_HOURS`) so a seed Last.fm can never answer
+        is not retried on every pass forever - the failure mode that once left a progress notice
+        stuck for days.
+
+        The blob is written even when the pass produced nothing, so ``suggested_state`` reports
+        "ready with no suggestions" rather than sitting at "pending" indefinitely.
+
+        :param listener: The listener id (``"household"`` in v1).
+        """
+        from .enrich.lastfm_similar import fetch_similar_artists  # noqa: PLC0415
+
+        api_key = self.get_config_value(
+            CONF_LASTFM_API_KEY, DEFAULT_LASTFM_API_KEY, return_type=str
+        ).strip()
+        if not api_key:
+            LOGGER.debug("Skipping discovery pass: no Last.fm API key configured")
+            return
+        genome = await self.store.get_cached_genome(listener)
+        genres = divergent_genres(genome)
+        seeds = select_seeds(genome, genres, limit=GENOME_DISCOVERY_SEED_LIMIT)
+        cached = await self.store.get_cached_discovery(listener) or {}
+        failures = _seed_failures(cached)
+        now = time.time()
+        cooldown = GENOME_DISCOVERY_SEED_ERROR_COOLDOWN_HOURS * 3600
+        excluded = await self._known_artist_keys(listener)
+        client = self._lastfm_similar_client_factory(self.mass)
+        best: dict[str, SuggestedArtist] = {}
+        attempted = 0
+        last_call = 0.0
+        for seed in seeds:
+            if now - failures.get(seed.artist_key, 0.0) < cooldown:
+                LOGGER.debug("Discovery: seed %r still in error cooldown", seed.artist_name)
+                continue
+            if attempted:
+                wait = GENOME_DISCOVERY_LASTFM_MIN_INTERVAL_SECONDS - (time.monotonic() - last_call)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            last_call = time.monotonic()
+            attempted += 1
+            try:
+                similar = await fetch_similar_artists(
+                    seed.artist_name,
+                    client=client,
+                    api_key=api_key,
+                    limit=GENOME_DISCOVERY_SIMILAR_PER_SEED,
+                )
+            except Exception as err:
+                # never str(err) on the raw transport exception: the request URL carries the
+                # API key as a query parameter (see importers/lastfm.py::describe_fetch_error)
+                LOGGER.info("Discovery: seed %r failed: %s", seed.artist_name, err)
+                failures[seed.artist_key] = now
+                continue
+            failures.pop(seed.artist_key, None)
+            for entry in similar:
+                key = create_safe_string(entry.name)
+                if not key or key in excluded:
+                    continue
+                existing = best.get(key)
+                if existing is not None and existing.match >= entry.match:
+                    continue
+                best[key] = SuggestedArtist(
+                    artist_name=entry.name,
+                    mbid=entry.mbid,
+                    seed_artist=seed.artist_name,
+                    genre_key=seed.genre.key,
+                    genre_label=seed.genre.label,
+                    match=entry.match,
+                )
+        suggested = sorted(best.values(), key=lambda row: (-row.match, row.artist_name.casefold()))
+        suggested = suggested[:GENOME_DISCOVERY_SUGGESTED_LIMIT]
+        # a seed that is gone from the genome entirely must not keep a cooldown row alive
+        seed_keys = {seed.artist_key for seed in seeds}
+        await self.store.set_cached_discovery(
+            listener,
+            {
+                "generated_at": now,
+                "suggested": [row.to_dict() for row in suggested],
+                "seed_failures": {k: v for k, v in failures.items() if k in seed_keys},
+            },
+        )
+        LOGGER.info(
+            "Discovery pass finished: %d seed(s) queried, %d suggestion(s) stored, %d seed(s) failing",
+            attempted,
+            len(suggested),
+            len(failures),
+        )
+
+    async def _cold_corners(self, listener: str, genres: Sequence[Any]) -> list[ColdArtist]:
+        """
+        Rank the library's barely-played artists against the household's divergent genres.
+
+        Local reads only (the MA library database and ``genome.db``). A failure on either is
+        logged and treated as "no cold corners": this feeds a discovery card, and an empty card
+        is a better outcome than an API command that raises at a user.
+
+        :param listener: The listener id (``"household"`` in v1).
+        :param genres: The divergent genres to rank against.
+        """
+        if not genres:
+            return []
+        try:
+            library_artists = await self._library_artists_reader(self.mass)
+            extra_plays = await self.store.artist_play_counts(listener)
+        except Exception:
+            LOGGER.warning("Could not read the library for discovery cold corners", exc_info=True)
+            return []
+        return rank_cold_corners(
+            library_artists,
+            genres,
+            max_plays=GENOME_DISCOVERY_COLD_MAX_PLAYS,
+            limit=GENOME_DISCOVERY_COLD_LIMIT,
+            extra_plays=extra_plays,
+        )
+
+    async def _known_artist_keys(self, listener: str) -> set[str]:
+        """Return every artist key already in the library or in the stored listen history."""
+        keys: set[str] = set()
+        try:
+            keys.update(
+                artist.artist_key for artist in await self._library_artists_reader(self.mass)
+            )
+            keys.update(await self.store.artist_play_counts(listener))
+        except Exception:
+            # a suggestion list that is not filtered is worse than none at all (it would
+            # recommend artists the household already owns), so fail the pass rather than
+            # store an unfiltered result
+            LOGGER.warning("Could not read known artists for discovery filtering", exc_info=True)
+            raise
+        return keys
+
     async def _run_ma_backfill(self, playlog_importer: Any) -> None:
         """
         Run the one-time MA playlog/tracks backfill in the background, then mark it done.
@@ -1111,6 +1392,43 @@ class GenomeController(CoreController):
         """Return the server's current local UTC offset, in seconds."""
         offset = datetime.now(LOCAL_TIMEZONE).utcoffset()
         return int(offset.total_seconds()) if offset is not None else 0
+
+
+def _float_or_none(value: Any) -> float | None:
+    """Coerce a stored timestamp to a float, treating anything unusable as "never run"."""
+    try:
+        return float(value)
+    except TypeError, ValueError:
+        return None
+
+
+def _seed_failures(cached: Mapping[str, Any]) -> dict[str, float]:
+    """Read the ``{seed_artist_key: failed_at}`` cooldown map out of a stored discovery blob."""
+    raw = cached.get("seed_failures")
+    if not isinstance(raw, dict):
+        return {}
+    failures: dict[str, float] = {}
+    for key, value in raw.items():
+        failed_at = _float_or_none(value)
+        if isinstance(key, str) and failed_at is not None:
+            failures[key] = failed_at
+    return failures
+
+
+def _suggested_from_cache(cached: Mapping[str, Any] | None) -> list[SuggestedArtist]:
+    """Rehydrate the stored suggestion rows, dropping any that no longer match the model."""
+    if not cached:
+        return []
+    rows = cached.get("suggested")
+    if not isinstance(rows, list):
+        return []
+    suggested: list[SuggestedArtist] = []
+    for row in rows:
+        try:
+            suggested.append(SuggestedArtist.from_dict(row))
+        except Exception:  # pragma: no cover - defensive, malformed stored row
+            LOGGER.debug("Skipping unreadable stored discovery suggestion", exc_info=True)
+    return suggested
 
 
 def _empty_import_result(source: str) -> GenomeImportResult:

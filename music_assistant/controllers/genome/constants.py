@@ -145,3 +145,51 @@ GENOME_ENRICHMENT_TASK_ID: Final[str] = "genome_enrichment"
 # run": 500 artists is a little over 20 minutes, comfortably inside the hourly cadence, and a
 # backlog simply drains over successive runs.
 GENOME_ENRICHMENT_BATCH_LIMIT: Final[int] = 500
+
+# --- discovery: cold corners + Last.fm similar artists (D-16) ---------------------------
+# The read path (`genome/discovery`) serves cold corners computed from local data and
+# suggestions served straight from the store. Nothing here is ever fetched inline.
+
+GENOME_DISCOVERY_TASK_ID: Final[str] = "genome_discovery"
+
+# Bumped whenever the stored discovery blob's shape changes. Deliberately separate from
+# GENOME_RESULT_SCHEMA_VERSION: discovery lives in its own cache row, so the (far more
+# expensive) genome result is not discarded because a discovery field moved.
+GENOME_DISCOVERY_CACHE_VERSION: Final[int] = 1
+
+# An artist in the library counts as a "cold corner" when the household has played them at
+# most this many times. Zero would surface only never-touched imports and would miss the more
+# interesting case - the artist tried once or twice, years ago, and never returned to. Three
+# or more starts to read as a small habit rather than a corner, so two is the ceiling.
+GENOME_DISCOVERY_COLD_MAX_PLAYS: Final[int] = 2
+GENOME_DISCOVERY_COLD_LIMIT: Final[int] = 25
+
+# How many of the household's own artists seed one Last.fm pass, and how many similar artists
+# are kept per seed. The product bounds one pass's request count (seeds) and result size.
+GENOME_DISCOVERY_SEED_LIMIT: Final[int] = 8
+GENOME_DISCOVERY_SIMILAR_PER_SEED: Final[int] = 20
+GENOME_DISCOVERY_SUGGESTED_LIMIT: Final[int] = 30
+
+# Cadence of the background discovery pass. Similar-artist graphs move on the scale of weeks,
+# and the seeds only change when the household's own top artists do, so a daily pass is
+# already generous - and it keeps the Last.fm request budget to a few dozen calls a day.
+GENOME_DISCOVERY_REFRESH_INTERVAL_HOURS: Final[int] = 24
+
+# Minimum wall-clock spacing between per-seed `artist.getSimilar` calls, mirroring
+# GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS. One request per seed per second sits an order of
+# magnitude under Last.fm's own ~5 req/sec guidance and leaves the shared throttler headroom
+# for a concurrent scrobble import.
+GENOME_DISCOVERY_LASTFM_MIN_INTERVAL_SECONDS: Final[float] = 1.0
+
+# A seed whose `artist.getSimilar` call RAISES is recorded with the time it failed and skipped
+# until this cooldown expires - the same shape as RESOLVE_ERROR_COOLDOWN_HOURS, and for the
+# same reason: a seed that can never succeed (a name Last.fm 404s on) must not be retried on
+# every pass forever.
+GENOME_DISCOVERY_SEED_ERROR_COOLDOWN_HOURS: Final[int] = 6
+
+LASTFM_SIMILAR_METHOD: Final[str] = "artist.getSimilar"
+
+# `suggested_state` values on the `genome/discovery` result (see models.DiscoveryResult).
+DISCOVERY_STATE_READY: Final[str] = "ready"
+DISCOVERY_STATE_PENDING: Final[str] = "pending"
+DISCOVERY_STATE_UNAVAILABLE: Final[str] = "unavailable"

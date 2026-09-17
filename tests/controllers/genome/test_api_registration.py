@@ -45,6 +45,8 @@ def test_controller_exposes_api_commands() -> None:
         "import_lastfm",
         "get_settings",
         "set_settings",
+        "discovery",
+        "discovery_refresh",
     } <= names
 
 
@@ -92,6 +94,8 @@ _SAMPLE_ARGS: dict[str, dict[str, Any]] = {
     },
     "import_lastfm": {"username": "Bob_Baird", "max_pages": 1},
     "get_settings": {},
+    "discovery": {"listener": "household"},
+    "discovery_refresh": {"listener": "household"},
     "set_settings": {"settings": {"lastfm_username": "Bob_Baird", "lastfm_api_key": "a" * 32}},
 }
 

@@ -359,3 +359,53 @@ class GenomeSettingsPatch(DataClassDictMixin):
     obscurity_percentile: int | None = None
     min_seconds_played: int | None = None
     apple_import_dir: str | None = None
+
+
+# ============================================================================================
+# discovery — the `genome/discovery` contract (D-16: read path, cache/database only)
+# ============================================================================================
+#
+# Frozen mashumaro dataclasses rather than TypedDicts, for the same reason
+# `GenomeSettingsPatch` is one: MA parses and serializes api_command payloads through
+# `helpers/api.py`, which bottoms out in `isinstance()` for arguments and `to_dict()` for
+# results, and a TypedDict supports neither.
+
+
+@dataclass(frozen=True)
+class ColdArtist(DataClassDictMixin):
+    """One artist already in the library that the household has barely or never played."""
+
+    artist_key: str
+    artist_name: str
+    plays: int
+    genre_key: str | None
+    genre_label: str | None
+
+
+@dataclass(frozen=True)
+class SuggestedArtist(DataClassDictMixin):
+    """One artist Last.fm considers similar to a household favourite, and not in the library."""
+
+    artist_name: str
+    mbid: str | None
+    seed_artist: str
+    genre_key: str | None
+    genre_label: str | None
+    match: float
+
+
+@dataclass(frozen=True)
+class DiscoveryResult(DataClassDictMixin):
+    """
+    The full ``genome/discovery`` response payload.
+
+    ``suggested_state`` is ``"unavailable"`` when no Last.fm API key is configured (a normal
+    state, not an error - ``in_library`` is still populated), ``"pending"`` when the background
+    pass has not produced results yet, and ``"ready"`` otherwise. ``generated_at`` is the unix
+    timestamp of the last completed background pass, or ``None`` if it has never run.
+    """
+
+    in_library: list[ColdArtist]
+    suggested: list[SuggestedArtist]
+    suggested_state: str
+    generated_at: float | None

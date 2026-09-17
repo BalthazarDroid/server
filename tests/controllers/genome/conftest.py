@@ -21,7 +21,7 @@ from music_assistant.controllers.genome.models import GenomeImportResult
 from music_assistant.helpers.json import json_loads
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
 
     from music_assistant.controllers.genome.models import (
         ArtistMeta,
@@ -79,6 +79,8 @@ class FixtureHttpClient:
             mbid = url.rsplit("/artist/", maxsplit=1)[1]
             return load_fixture(f"musicbrainz_artist_lookup_{mbid}")
         if "audioscrobbler.com" in url:
+            if params.get("method") == "artist.getSimilar":
+                return self._similar_artists(params.get("artist", ""))
             page = params.get("page", "1")
             return load_fixture(f"lastfm_recent_page{page}")
         raise AssertionError(f"FixtureHttpClient: no fixture mapped for GET {url} {params}")
@@ -89,6 +91,13 @@ class FixtureHttpClient:
         if "popularity/artist" in url:
             return load_fixture("listenbrainz_popularity")
         raise AssertionError(f"FixtureHttpClient: no fixture mapped for POST {url} {json}")
+
+    def _similar_artists(self, artist_name: str) -> Any:
+        """Resolve an ``artist.getSimilar`` seed name to its fixture response."""
+        slug = _ARTIST_SLUGS.get(artist_name)
+        if slug is None:
+            return load_fixture("lastfm_similar_empty")
+        return load_fixture(f"lastfm_similar_{slug}")
 
     def _search_artist(self, query: str) -> Any:
         """Resolve a Lucene ``artist:"<name>"`` search query to its fixture search result."""
@@ -135,6 +144,10 @@ class StubGenomeStore:
         self.failed_keys: set[str] = set()
         self.retried_keys: list[str] = []
         self.dismissed_keys: frozenset[str] | None = None
+        # discovery test doubles (D-16) — the stored blob a background pass writes and the
+        # read path serves; `artist_plays` stands in for the per-artist listen counts
+        self.discovery: dict[str, dict[str, Any]] = {}
+        self.artist_plays: dict[str, int] = {}
 
     async def setup(self) -> None:
         """No-op: nothing to open."""
@@ -195,6 +208,7 @@ class StubGenomeStore:
         self.listens.clear()
         self.artist_meta.clear()
         self.cache.clear()
+        self.discovery.clear()
 
     async def source_counts(self, listener: str) -> dict[str, int]:
         """Return listen counts grouped by source."""
@@ -261,6 +275,18 @@ class StubGenomeStore:
     async def unresolved_dismissed_keys(self) -> frozenset[str] | None:
         """Return whatever a test set on ``dismissed_keys``; ``None`` by default (never dismissed)."""
         return self.dismissed_keys
+
+    async def get_cached_discovery(self, listener: str) -> dict[str, Any] | None:
+        """Return the stored discovery blob for ``listener``, if any."""
+        return self.discovery.get(listener)
+
+    async def set_cached_discovery(self, listener: str, data: Mapping[str, Any]) -> None:
+        """Store the discovery blob for ``listener``, exactly as the real store would."""
+        self.discovery[listener] = dict(data)
+
+    async def artist_play_counts(self, listener: str) -> dict[str, int]:
+        """Return whatever a test set on ``artist_plays``."""
+        return dict(self.artist_plays)
 
 
 @pytest.fixture

@@ -29,6 +29,7 @@ from music_assistant.controllers.genome.constants import (
     DB_TABLE_GENOME_LISTENS,
     DB_TABLE_SETTINGS,
     ENGINE_VERSION,
+    GENOME_DISCOVERY_CACHE_VERSION,
     GENOME_RESULT_SCHEMA_VERSION,
     LOGGER,
     RESOLVE_ERROR_COOLDOWN_HOURS,
@@ -546,6 +547,75 @@ class GenomeStore:
             },
         )
 
+    async def get_cached_discovery(self, listener: str) -> dict[str, Any] | None:
+        """
+        Return the stored discovery blob for ``listener``, or ``None`` if absent or stale.
+
+        Stored in its own ``genome_cache`` row rather than inside the genome result, so a
+        change to the discovery payload never discards the (far more expensive) genome blob,
+        and neither version number has to move for the other's sake.
+
+        :param listener: The listener id (``"household"`` in v1).
+        """
+        assert self.database is not None
+        row = await self.database.get_row(
+            DB_TABLE_GENOME_CACHE, {"key": self._discovery_cache_key(listener)}
+        )
+        if row is None:
+            return None
+        try:
+            data = json_loads(row["value"])
+        except Exception as err:  # pragma: no cover - defensive, malformed cache row
+            LOGGER.warning("Discarding malformed genome discovery cache entry: %s", err)
+            return None
+        if not isinstance(data, dict) or data.get("version") != GENOME_DISCOVERY_CACHE_VERSION:
+            LOGGER.info(
+                "Discarding genome discovery cache entry from version %s (current: %s)",
+                data.get("version") if isinstance(data, dict) else "unknown",
+                GENOME_DISCOVERY_CACHE_VERSION,
+            )
+            return None
+        return cast("dict[str, Any]", data)
+
+    async def set_cached_discovery(self, listener: str, data: Mapping[str, Any]) -> None:
+        """
+        Store ``data`` as the discovery blob for ``listener``, stamped with the current version.
+
+        :param listener: The listener id (``"household"`` in v1).
+        :param data: The blob to store; the version stamp is applied here, not by the caller.
+        """
+        assert self.database is not None
+        now = int(time.time())
+        await self.database.upsert(
+            DB_TABLE_GENOME_CACHE,
+            {
+                "key": self._discovery_cache_key(listener),
+                "value": json_dumps({**data, "version": GENOME_DISCOVERY_CACHE_VERSION}),
+                "created_at": now,
+                "expires_at": 0,
+            },
+        )
+        await self.database.commit()
+
+    async def artist_play_counts(self, listener: str) -> dict[str, int]:
+        """
+        Return ``{artist_key: stored_listen_count}`` for ``listener``.
+
+        The count Genome itself holds, across every source it has imported - which is not the
+        same figure as the MA library's own ``play_count``, and is usually much larger on an
+        install seeded from an Apple or Last.fm export.
+
+        :param listener: The listener id (``"household"`` in v1).
+        """
+        assert self.database is not None
+        rows = await self.database.get_rows_from_query(
+            f"SELECT artist_key, COUNT(*) AS n FROM {DB_TABLE_GENOME_LISTENS} "
+            "WHERE listener = :listener GROUP BY artist_key",
+            {"listener": listener},
+            limit=0,
+        )
+        return {row["artist_key"]: int(row["n"]) for row in rows}
+
     async def clear(self, listener: str | None = None) -> None:
         """
         Delete stored listens and cached genomes.
@@ -565,6 +635,9 @@ class GenomeStore:
         else:
             await self.database.delete(DB_TABLE_GENOME_LISTENS, {"listener": listener})
             await self.database.delete(DB_TABLE_GENOME_CACHE, {"key": self._cache_key(listener)})
+            await self.database.delete(
+                DB_TABLE_GENOME_CACHE, {"key": self._discovery_cache_key(listener)}
+            )
         await self.database.commit()
 
     async def source_counts(self, listener: str) -> dict[str, int]:
@@ -719,6 +792,10 @@ class GenomeStore:
     def _cache_key(self, listener: str) -> str:
         """Build the ``genome_cache`` key for a listener at the current engine version."""
         return f"genome:{listener}:{ENGINE_VERSION}"
+
+    def _discovery_cache_key(self, listener: str) -> str:
+        """Build the ``genome_cache`` key holding a listener's discovery blob."""
+        return f"discovery:{listener}"
 
     def _row_to_listen(self, row: Mapping[str, Any]) -> Listen:
         """Convert a ``genome_listens`` row into a :class:`Listen`."""

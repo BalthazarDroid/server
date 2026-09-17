@@ -1,0 +1,35 @@
+{
+  "similarartists": {
+    "artist": [
+      {
+        "name": "Jónsi",
+        "mbid": "b7b6a1d1-6d5f-4b0d-9f1a-3c6a2f0a1111",
+        "match": "1.0",
+        "url": "https://www.last.fm/music/J%C3%B3nsi"
+      },
+      {
+        "name": "Ólafur Arnalds",
+        "mbid": "3e1a9a06-7d69-4f4a-9b27-6cfb0f6b2222",
+        "match": "0.812345",
+        "url": "https://www.last.fm/music/%C3%93lafur+Arnalds"
+      },
+      {
+        "name": "Radiohead",
+        "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        "match": "0.5",
+        "url": "https://www.last.fm/music/Radiohead"
+      },
+      {
+        "name": "",
+        "mbid": "",
+        "match": "0.4"
+      },
+      {
+        "name": "Amiina",
+        "mbid": "",
+        "match": "not-a-number"
+      }
+    ],
+    "@attr": { "artist": "Sigur Rós" }
+  }
+}

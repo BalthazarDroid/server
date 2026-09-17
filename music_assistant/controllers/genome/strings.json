@@ -61,7 +61,8 @@
   "background_task": {
     "genome_rebuild": "Listening genome rebuild",
     "genome_lastfm_poll": "Listening genome Last.fm poll",
-    "genome_enrichment": "Listening genome MusicBrainz enrichment"
+    "genome_enrichment": "Listening genome MusicBrainz enrichment",
+    "genome_discovery": "Listening genome discovery"
   },
   "manifest": {
     "name": "Listening Genome",

@@ -33,6 +33,8 @@ from music_assistant.controllers.genome.constants import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from music_assistant.controllers.genome.controller import _GenomeStoreProtocol
     from music_assistant.controllers.genome.http import HttpClient
     from music_assistant.mass import MusicAssistant
@@ -250,6 +252,20 @@ def _map_tags_to_genres(tag_names: Any) -> tuple[str, ...]:
     return tuple(genres)
 
 
+def map_genre_names(names: Iterable[str]) -> tuple[str, ...]:
+    """
+    Map free-form genre/tag names to ``genre_mapping.json`` translation keys (D-07).
+
+    The public entry point onto the same alias table the MusicBrainz tag mapping uses, so a
+    genre string that arrives from somewhere else entirely (an MA library artist's own
+    metadata, for the discovery feature) lands in exactly the same 59-key vocabulary the
+    divergence maths is expressed in.
+
+    :param names: Genre/tag names, most confident first.
+    """
+    return _map_tags_to_genres(names)
+
+
 def _parse_year(value: Any) -> int | None:
     """Parse a MusicBrainz ``life-span.begin`` value (``"1994"`` or ``"1994-03-01"``) to a year."""
     if not value or not isinstance(value, str):
@@ -260,4 +276,4 @@ def _parse_year(value: Any) -> int | None:
         return None
 
 
-__all__ = ["ArtistMetaUpdate", "enrich_pending_artists", "resolve_artist"]
+__all__ = ["ArtistMetaUpdate", "enrich_pending_artists", "map_genre_names", "resolve_artist"]

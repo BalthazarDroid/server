@@ -55,7 +55,7 @@ def _describe_api_error(data: dict[str, Any]) -> str:
     return f"{message} {hint}" if hint else str(message)
 
 
-def _describe_fetch_error(err: Exception) -> str:
+def describe_fetch_error(err: Exception) -> str:
     """
     Build a safe, actionable message from a failed Last.fm HTTP request.
 
@@ -276,7 +276,7 @@ class LastfmImporter:
             except Exception as err:
                 status = getattr(err, "status", None)
                 if status in _PERMANENT_STATUS_CODES:
-                    raise LastfmApiError(_describe_fetch_error(err)) from err
+                    raise LastfmApiError(describe_fetch_error(err)) from err
                 last_err = err
                 transient = status is None or status in _TRANSIENT_STATUS_CODES
                 if not transient or attempt == LASTFM_RETRY_MAX_ATTEMPTS:
@@ -296,9 +296,9 @@ class LastfmImporter:
             "Last.fm page %d: giving up after %d attempt(s): %s",
             page,
             LASTFM_RETRY_MAX_ATTEMPTS,
-            _describe_fetch_error(last_err),
+            describe_fetch_error(last_err),
         )
-        raise LastfmApiError(_describe_fetch_error(last_err)) from last_err
+        raise LastfmApiError(describe_fetch_error(last_err)) from last_err
 
     async def _resume_timestamp(self, store: _GenomeStoreProtocol, listener: str) -> int:
         """Return the newest stored Last.fm ``played_at`` for ``listener``, or ``0``."""
@@ -359,4 +359,4 @@ class LastfmImporter:
         )
 
 
-__all__ = ["LastfmImporter", "LastfmPage"]
+__all__ = ["LastfmImporter", "LastfmPage", "describe_fetch_error"]
