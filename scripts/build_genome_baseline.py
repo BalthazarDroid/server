@@ -21,10 +21,14 @@ Three modes, chosen by whichever fixture/dump flag is given (default: live fetch
 - ``--from-dump PATH``: same as ``--fixture``, kept as a separate flag per §3.7 for a raw
   ListenBrainz data-dump export shaped the same way; the two are equivalent in this script.
 
-Usage:
-    uv run -m scripts.build_genome_baseline --fixture tests/fixtures/genome/listenbrainz_baseline_sample.json \\
+Usage. Plain ``python3`` on purpose, not ``uv run``: the point of the no-server-import rule
+above is that this script runs anywhere the repo is checked out, including a shell that has
+none of the project tooling. ``uv`` lives in the dev container; requiring it here would throw
+that away for no benefit. Run from the repo root::
+
+    python3 scripts/build_genome_baseline.py --fixture tests/fixtures/genome/listenbrainz_baseline_sample.json \\
         --out music_assistant/controllers/genome/baseline/baseline_v1.json
-    uv run -m scripts.build_genome_baseline --out music_assistant/controllers/genome/baseline/baseline_v1.json --sample 1500
+    python3 scripts/build_genome_baseline.py --out music_assistant/controllers/genome/baseline/baseline_v1.json --sample 1500
 """
 
 from __future__ import annotations
@@ -96,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     if provisional:
         document["note"] = (
             "provisional, fixture-derived — regenerate with "
-            "`uv run -m scripts.build_genome_baseline --sample 50000` once ListenBrainz is "
+            "`python3 scripts/build_genome_baseline.py --sample 50000` once ListenBrainz is "
             "reachable, then drop the 'provisional'/'note' fields."
         )
 
