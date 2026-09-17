@@ -160,3 +160,21 @@ def test_user_agent_identifies_the_client() -> None:
     """MusicBrainz refuses anonymous clients, and aiohttp's default is anonymous."""
     assert "MusicAssistant" in build_genome_baseline.USER_AGENT
     assert "http" in build_genome_baseline.USER_AGENT
+
+
+def test_default_musicbrainz_host_is_not_the_music_assistant_mirror() -> None:
+    """
+    The mirror is the MA project's own, for running MA instances to resolve metadata.
+
+    It answers 403 to anything not identifying as Music Assistant, and spoofing that
+    User-Agent to push ~1500 lookups of one-off bulk traffic through infrastructure someone
+    else pays for is not a thing to do quietly in a script. The canonical API is where this
+    belongs; --mb-base-url exists for anyone running their own.
+    """
+    assert "music-assistant.io" not in build_genome_baseline.MUSICBRAINZ_BASE_URL
+    assert build_genome_baseline.MUSICBRAINZ_BASE_URL.startswith("https://musicbrainz.org/")
+
+
+def test_pacing_respects_the_documented_courtesy_limit() -> None:
+    """MusicBrainz documents ~1 req/sec; the delay is a ceiling, not a target."""
+    assert build_genome_baseline.LIVE_REQUEST_DELAY_SECONDS >= 1.0

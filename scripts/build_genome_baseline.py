@@ -51,7 +51,16 @@ GENRE_MAPPING_PATH = (
 )
 
 LISTENBRAINZ_BASE_URL = "https://api.listenbrainz.org"
-MUSICBRAINZ_BASE_URL = "https://musicbrainz-mirror.music-assistant.io/ws/2"
+# MusicBrainz proper, not the Music Assistant mirror the SERVER uses.
+#
+# The mirror exists so that running MA instances can resolve metadata cheaply, and it answers
+# 403 to anything not identifying itself as Music Assistant. Setting that User-Agent from a
+# script would get past it, and that is exactly why it should not be done: a one-off baseline
+# build is ~1500 lookups of bulk traffic the project is hosting for a different purpose, and
+# it is not an MA instance asking. The canonical API is the right place to ask, it welcomes
+# this with an identifying User-Agent and one request per second, and the pacing below already
+# honours that. Override with --mb-base-url if you have your own mirror.
+MUSICBRAINZ_BASE_URL = "https://musicbrainz.org/ws/2"
 REQUIRED_PERCENTILES = (5, 10, 25, 50, 75, 90)
 # MusicBrainz's documented courtesy limit is ~1 req/sec, and this project has already been
 # penalised once for treating that as a target rather than a ceiling. 1.3s with jitter keeps
@@ -66,8 +75,9 @@ LIVE_RETRY_BACKOFF_SECONDS = 2.0
 # 429 and 5xx are worth another attempt. A 404 or a 400 is not - the request itself is wrong,
 # and repeating it just spends someone else's rate limit to get the same answer.
 LIVE_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-# MusicBrainz requires an identifying User-Agent and refuses requests without one. aiohttp
-# sends only its own by default, which is exactly the anonymous client the policy is aimed at.
+# MusicBrainz requires a User-Agent identifying the application and giving a contact address,
+# and refuses anonymous clients. aiohttp sends only its own by default, which is exactly the
+# anonymous client that policy is aimed at.
 USER_AGENT = "MusicAssistant-ListeningGenome/1.0 ( https://github.com/music-assistant/server )"
 
 
@@ -87,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         source = "listenbrainz-popularity-fixture"
     else:
         try:
-            records = asyncio.run(_fetch_live(args.sample))
+            records = asyncio.run(_fetch_live(args.sample, args.mb_base_url))
         except OSError as err:
             print(f"Live ListenBrainz fetch failed ({err}); see BRIEF.md network constraints.")
             return 1
@@ -250,7 +260,7 @@ def _load_fixture(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-async def _fetch_live(sample: int) -> list[dict[str, Any]]:
+async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> list[dict[str, Any]]:
     """
     Sample ListenBrainz's sitewide popularity plus MusicBrainz artist tags (§3.7).
 
@@ -289,7 +299,7 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
             popularity = popularity_by_mbid.get(mbid, {})
             lookup = await _get_json(
                 session,
-                f"{MUSICBRAINZ_BASE_URL}/artist/{mbid}",
+                f"{mb_base_url}/artist/{mbid}",
                 params={"inc": "tags+genres", "fmt": "json"},
             )
             await _pace()
@@ -438,6 +448,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Offline mode: path to a raw ListenBrainz dump shaped the same way.",
     )
     parser.add_argument("--version", default="v1-2026-09", help="Baseline version string to embed.")
+    parser.add_argument(
+        "--mb-base-url",
+        default=MUSICBRAINZ_BASE_URL,
+        help=(
+            "MusicBrainz web-service root. Defaults to the public API; point this at your own "
+            "mirror if you run one. Not Music Assistant's mirror - see the note by "
+            "MUSICBRAINZ_BASE_URL."
+        ),
+    )
     return parser.parse_args(argv)
 
 
