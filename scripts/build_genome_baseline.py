@@ -58,8 +58,17 @@ REQUIRED_PERCENTILES = (5, 10, 25, 50, 75, 90)
 # every run comfortably under it even when several requests land on the same second.
 LIVE_REQUEST_DELAY_SECONDS = 1.3
 LIVE_REQUEST_JITTER_SECONDS = 0.4
-# Retry a transient failure rather than losing the whole run to one bad response.
+# Retry a transient failure rather than losing the whole run to one bad response. A full run
+# is ~1500 requests over ~35 minutes; at that length a single 503 is close to expected, and
+# without a retry it costs the entire run.
 LIVE_MAX_ATTEMPTS = 4
+LIVE_RETRY_BACKOFF_SECONDS = 2.0
+# 429 and 5xx are worth another attempt. A 404 or a 400 is not - the request itself is wrong,
+# and repeating it just spends someone else's rate limit to get the same answer.
+LIVE_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# MusicBrainz requires an identifying User-Agent and refuses requests without one. aiohttp
+# sends only its own by default, which is exactly the anonymous client the policy is aimed at.
+USER_AGENT = "MusicAssistant-ListeningGenome/1.0 ( https://github.com/music-assistant/server )"
 
 
 async def _pace() -> None:
@@ -251,7 +260,7 @@ async def _fetch_live(sample: int) -> list[dict[str, Any]]:
     import aiohttp  # noqa: PLC0415 - optional dependency, only needed for the live-fetch path
 
     records: list[dict[str, Any]] = []
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
         top_artists = await _get_json(
             session,
             f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
@@ -330,17 +339,68 @@ def _unwrap(response: Any, key: str | None = None) -> list[dict[str, Any]]:
 
 
 async def _get_json(session: Any, url: str, *, params: dict[str, str] | None = None) -> Any:
-    """Issue a throttled GET request and return the decoded JSON body."""
-    async with session.get(url, params=params) as response:
-        response.raise_for_status()
-        return await response.json()
+    """Issue a GET request and return the decoded JSON body, retrying transient failures."""
+    return await _request_json(session, "GET", url, params=params)
+
+
+async def _request_json(
+    session: Any,
+    method: str,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    json_body: Any = None,
+) -> Any:
+    """
+    Issue one request, retrying a transient failure with exponential backoff.
+
+    :param session: An open aiohttp ClientSession.
+    :param method: HTTP method.
+    :param url: Absolute request URL.
+    :param params: Optional query parameters.
+    :param json_body: Optional JSON request body.
+    """
+    import aiohttp  # noqa: PLC0415 - optional dependency, only needed for the live-fetch path
+
+    last_status: int | None = None
+    for attempt in range(1, LIVE_MAX_ATTEMPTS + 1):
+        try:
+            async with session.request(method, url, params=params, json=json_body) as response:
+                if response.status in LIVE_RETRY_STATUSES:
+                    last_status = response.status
+                    raise _TransientFetchError(response.status)
+                if response.status >= 400:
+                    # Raised directly rather than via raise_for_status(), whose
+                    # ClientResponseError is an aiohttp.ClientError and would therefore be
+                    # caught by the retry handler below - turning "this request is wrong" into
+                    # four identical wrong requests.
+                    msg = f"{method} {url} failed (HTTP {response.status})"
+                    raise OSError(msg)
+                return await response.json()
+        except (aiohttp.ClientError, TimeoutError, _TransientFetchError) as err:
+            if attempt == LIVE_MAX_ATTEMPTS:
+                detail = f"HTTP {last_status}" if last_status else type(err).__name__
+                msg = f"{method} {url} failed after {attempt} attempts ({detail})"
+                raise OSError(msg) from err
+            # Back off further each time: a server shedding load needs longer, not the same
+            # interval again.
+            await asyncio.sleep(LIVE_RETRY_BACKOFF_SECONDS * attempt)
+    # Unreachable: the final attempt either returns or raises.
+    raise OSError(f"{method} {url} failed")
+
+
+class _TransientFetchError(Exception):
+    """A response worth retrying. Carries only the status - never the URL, which has a key."""
+
+    def __init__(self, status: int) -> None:
+        """:param status: The HTTP status that triggered the retry."""
+        super().__init__(f"HTTP {status}")
+        self.status = status
 
 
 async def _post_json(session: Any, url: str, *, json: Any) -> Any:
-    """Issue a throttled POST request and return the decoded JSON body."""
-    async with session.post(url, json=json) as response:
-        response.raise_for_status()
-        return await response.json()
+    """Issue a POST request and return the decoded JSON body, retrying transient failures."""
+    return await _request_json(session, "POST", url, json_body=json)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
