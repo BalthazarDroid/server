@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from unittest import mock
 
 import pytest
 from music_assistant_models.enums import ConfigEntryType
@@ -203,6 +204,91 @@ async def test_unresolved_artists_passes_limit_through(
 async def test_unresolved_artists_empty_by_default(genome_controller: GenomeController) -> None:
     """No artists have failed in the stub by default."""
     assert await genome_controller.unresolved_artists() == []
+
+
+# ---------------------------------------------------------------------------------------
+# genome/retry_artists, genome/dismiss_unresolved
+# ---------------------------------------------------------------------------------------
+
+
+async def test_retry_artists_none_retries_every_failed_artist(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """Passing no keys retries every currently-failed artist."""
+    genome_store.failed_keys = {"a", "b"}
+    result = await genome_controller.retry_artists()
+    assert result == 2
+    assert genome_store.failed_keys == set()
+    assert sorted(genome_store.retried_keys) == ["a", "b"]
+
+
+async def test_retry_artists_with_keys_retries_only_those(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """Passing explicit keys only retries the intersection with the failed set."""
+    genome_store.failed_keys = {"a", "b", "c"}
+    result = await genome_controller.retry_artists(artist_keys=["a", "z"])
+    assert result == 1
+    assert genome_store.failed_keys == {"b", "c"}
+    assert genome_store.retried_keys == ["a"]
+
+
+async def test_retry_artists_returns_zero_when_nothing_failed(
+    genome_controller: GenomeController,
+) -> None:
+    """No failed artists in the stub by default means nothing to retry."""
+    assert await genome_controller.retry_artists() == 0
+
+
+async def test_retry_artists_does_no_network_work(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """`genome/retry_artists` only touches store state - never anything network-shaped."""
+    genome_store.failed_keys = {"a"}
+    with mock.patch("music_assistant.controllers.genome.http.AiohttpClient") as client:
+        await genome_controller.retry_artists()
+    client.assert_not_called()
+
+
+async def test_dismiss_unresolved_records_current_failed_set(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """Dismissing records exactly the artists currently failing, and reports itself dismissed."""
+    genome_store.failed_keys = {"a", "b"}
+    result = await genome_controller.dismiss_unresolved()
+    assert result is True
+    assert genome_store.dismissed_keys == frozenset({"a", "b"})
+
+
+async def test_dismiss_unresolved_returns_to_false_when_a_new_artist_fails(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """A newly-failing artist changes the current set, so the dismissal no longer matches."""
+    genome_store.failed_keys = {"a"}
+    await genome_controller.dismiss_unresolved()
+    genome_store.failed_keys.add("b")
+    assert await genome_controller._unresolved_dismissed() is False
+
+
+async def test_dismiss_unresolved_with_no_failures_dismisses_the_empty_set(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """Dismissing with nothing currently failed still records (and matches) the empty set."""
+    result = await genome_controller.dismiss_unresolved()
+    assert result is True
+    assert genome_store.dismissed_keys == frozenset()
+
+
+async def test_rebuild_stats_reflect_dismissal_state(
+    genome_controller: GenomeController, genome_store: StubGenomeStore
+) -> None:
+    """`stats.unresolved_dismissed` is computed fresh on every rebuild."""
+    genome_store.failed_keys = {"a"}
+    result = await genome_controller.get_genome(refresh=True)
+    assert result["stats"]["unresolved_dismissed"] is False
+    await genome_controller.dismiss_unresolved()
+    result = await genome_controller.get_genome(refresh=True)
+    assert result["stats"]["unresolved_dismissed"] is True
 
 
 async def test_get_genome_serves_fresh_cache(

@@ -38,6 +38,8 @@ def test_controller_exposes_api_commands() -> None:
     assert {
         "get_genome",
         "unresolved_artists",
+        "retry_artists",
+        "dismiss_unresolved",
         "rebuild",
         "import_apple",
         "import_lastfm",
@@ -78,6 +80,8 @@ def test_api_command_annotations_resolve_at_runtime(name: str, func: object) -> 
 _SAMPLE_ARGS: dict[str, dict[str, Any]] = {
     "get_genome": {"listener": "household", "refresh": False},
     "unresolved_artists": {"limit": 50},
+    "retry_artists": {"artist_keys": ["artist_a"]},
+    "dismiss_unresolved": {},
     "rebuild": {"listener": "household", "enrich": True},
     "import_apple": {
         "upload_id": "u1",

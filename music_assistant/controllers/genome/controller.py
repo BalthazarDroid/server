@@ -180,6 +180,10 @@ class _GenomeStoreProtocol(Protocol):
     async def mark_lastfm_backfill_done(self) -> None: ...
     async def artist_resolution_counts(self) -> dict[str, int]: ...
     async def failed_artist_keys(self, limit: int = 100) -> list[FailedArtist]: ...
+    async def retry_failed_artists(self, artist_keys: Sequence[str] | None = None) -> int: ...
+    async def all_failed_artist_keys(self) -> frozenset[str]: ...
+    async def dismiss_unresolved(self, artist_keys: Sequence[str]) -> None: ...
+    async def unresolved_dismissed_keys(self) -> frozenset[str] | None: ...
 
 
 class _UploadState:
@@ -438,6 +442,39 @@ class GenomeController(CoreController):
         :param limit: The maximum number of rows to return.
         """
         return await self.store.failed_artist_keys(limit=limit)
+
+    @api_command("genome/retry_artists", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/retry_artists")
+    async def retry_artists(self, artist_keys: list[str] | None = None) -> int:
+        """
+        Put failed artists back in the resolution queue immediately, ignoring the error cooldown.
+
+        Does no network work itself: it only resets stored state, so the existing background
+        (hourly) or on-demand (rebuild) enrichment pass is what actually retries the
+        MusicBrainz lookup, on its own schedule.
+
+        :param artist_keys: The artist keys to retry; ``None`` retries every failed artist.
+        :return: The number of artists moved back to the resolution queue.
+        """
+        return await self.store.retry_failed_artists(artist_keys)
+
+    @api_command("genome/dismiss_unresolved", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/dismiss_unresolved")
+    async def dismiss_unresolved(self) -> bool:
+        """
+        Dismiss the "could not be identified" notice for the artists failing right now.
+
+        Records a fingerprint of the artists currently in the ``error`` resolve state rather
+        than muting the notice outright: if a different (or additional) artist later ends up
+        in ``error``, ``GenomeStats.unresolved_dismissed`` goes back to ``False`` and the
+        notice returns, because it is never honest to promise "you will not hear about this
+        again" about a problem that has not happened yet.
+
+        :return: Whether the current failed-artist set is now fully dismissed.
+        """
+        failed = await self.store.all_failed_artist_keys()
+        await self.store.dismiss_unresolved(sorted(failed))
+        return await self._unresolved_dismissed()
 
     @api_command("genome/rebuild", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/rebuild")
@@ -863,6 +900,18 @@ class GenomeController(CoreController):
         genome["stats"]["artists_resolved"] = counts.get(RESOLVE_STATE_OK, 0) + counts.get(
             RESOLVE_STATE_NOT_FOUND, 0
         )
+        genome["stats"]["unresolved_dismissed"] = await self._unresolved_dismissed()
+
+    async def _unresolved_dismissed(self) -> bool:
+        """Return whether the currently-failed artist set exactly matches the dismissed one."""
+        try:
+            dismissed = await self.store.unresolved_dismissed_keys()
+            if dismissed is None:
+                return False
+            return dismissed == await self.store.all_failed_artist_keys()
+        except Exception:  # pragma: no cover - defensive, must never fail a rebuild
+            LOGGER.debug("Could not compute unresolved_dismissed", exc_info=True)
+            return False
 
     async def _enrich_pending(self, *, limit: int = 200, min_interval_seconds: float = 0.0) -> int:
         """

@@ -75,6 +75,13 @@ _MA_BACKFILL_DONE_KEY = "ma_backfill_done"
 # `_MA_BACKFILL_DONE_KEY` above - no schema change, no migration, no risk to imported rows.
 _LASTFM_BACKFILL_DONE_KEY = "lastfm_backfill_done"
 
+# settings-table key recording the fingerprint (sorted artist_key list, JSON-encoded) of the
+# `error`-state artists that were current the last time the user dismissed the "could not be
+# identified" notice. Same table, same pattern as `_LASTFM_BACKFILL_DONE_KEY` - a remembered
+# fingerprint rather than a permanent mute, so a newly-failing artist brings the notice back
+# (see GenomeStore.unresolved_dismissed_keys / all_failed_artist_keys).
+_UNRESOLVED_DISMISSED_KEY = "unresolved_dismissed_keys"
+
 
 class ArtistMetaWrite(TypedDict, total=False):
     """
@@ -390,6 +397,93 @@ class GenomeStore:
             }
             for row in rows
         ]
+
+    async def retry_failed_artists(self, artist_keys: Sequence[str] | None = None) -> int:
+        """
+        Move ``error`` artists back to ``pending`` immediately, ignoring the error cooldown.
+
+        Reuses :meth:`upsert_artist_meta_full` with the same minimal row shape
+        (``artist_key``/``artist_name`` only) that :mod:`enrich.musicbrainz` already writes for
+        an ``error`` row - safe here for the same reason it is safe there: an ``error`` row
+        never carries ``mbid``/``mb_tags``/``genres``/popularity data, so rewriting it with only
+        those two columns clobbers nothing. This does no network work itself; the existing
+        background/scheduled enrichment pass picks the row up on its next run because
+        ``pending`` is always eligible, with no cooldown (see :meth:`pending_artist_keys`).
+
+        :param artist_keys: The artist keys to retry; ``None`` retries every failed artist.
+        :return: The number of rows moved back to ``pending``.
+        """
+        assert self.database is not None
+        if artist_keys is not None and not artist_keys:
+            return 0
+        query = (
+            f"SELECT artist_key, artist_name FROM {DB_TABLE_GENOME_ARTIST_META} "
+            "WHERE resolve_state = :error"
+        )
+        params: dict[str, Any] = {"error": RESOLVE_STATE_ERROR}
+        if artist_keys is not None:
+            query += " AND artist_key IN (:keys)"
+            params["keys"] = list(artist_keys)
+        rows = await self.database.get_rows_from_query(query, params, limit=0)
+        targets = [(row["artist_key"], row["artist_name"]) for row in rows]
+        if not targets:
+            return 0
+        await self.upsert_artist_meta_full(
+            [ArtistMetaWrite(artist_key=key, artist_name=name) for key, name in targets],
+            state=RESOLVE_STATE_PENDING,
+        )
+        return len(targets)
+
+    async def all_failed_artist_keys(self) -> frozenset[str]:
+        """
+        Return every ``artist_key`` currently in the ``error`` resolve state, unlimited.
+
+        Unlike :meth:`failed_artist_keys` (a capped display listing), this exists only to be
+        compared against a dismissed fingerprint (:meth:`unresolved_dismissed_keys`), so it
+        must see the whole set regardless of how many artists have failed.
+        """
+        assert self.database is not None
+        rows = await self.database.get_rows_from_query(
+            f"SELECT artist_key FROM {DB_TABLE_GENOME_ARTIST_META} WHERE resolve_state = :error",
+            {"error": RESOLVE_STATE_ERROR},
+            limit=0,
+        )
+        return frozenset(row["artist_key"] for row in rows)
+
+    async def dismiss_unresolved(self, artist_keys: Sequence[str]) -> None:
+        """
+        Record ``artist_keys`` as the dismissed "could not be identified" fingerprint.
+
+        Not a permanent mute: :meth:`unresolved_dismissed_keys` lets the caller compare this
+        fingerprint against the artists currently in ``error`` state, so a newly-failing (or
+        newly-recovered) artist changes the current set and the notice returns.
+
+        :param artist_keys: The artist keys currently in the ``error`` resolve state.
+        """
+        assert self.database is not None
+        await self.database.insert_or_replace(
+            DB_TABLE_SETTINGS,
+            {
+                "key": _UNRESOLVED_DISMISSED_KEY,
+                "value": json_dumps(sorted(set(artist_keys))),
+                "type": "json",
+            },
+        )
+        await self.database.commit()
+
+    async def unresolved_dismissed_keys(self) -> frozenset[str] | None:
+        """Return the dismissed failed-artist fingerprint, or ``None`` if never dismissed."""
+        assert self.database is not None
+        row = await self.database.get_row(DB_TABLE_SETTINGS, {"key": _UNRESOLVED_DISMISSED_KEY})
+        if row is None:
+            return None
+        try:
+            keys = json_loads(row["value"])
+        except Exception:  # pragma: no cover - defensive, malformed settings row
+            return None
+        if not isinstance(keys, list):  # pragma: no cover - defensive, malformed settings row
+            return None
+        return frozenset(keys)
 
     async def mark_popularity_attempted(self, artist_keys: Sequence[str]) -> None:
         """

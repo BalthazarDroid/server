@@ -130,6 +130,11 @@ class StubGenomeStore:
         # unresolved-artists test double (§3.4 `genome/unresolved_artists`) — set directly
         # in a test that wants non-empty results
         self.failed_artists: list[FailedArtist] = []
+        # genome/retry_artists + genome/dismiss_unresolved test doubles — a test sets
+        # `failed_keys` directly, then inspects `retried_keys`/`dismissed_keys` afterwards
+        self.failed_keys: set[str] = set()
+        self.retried_keys: list[str] = []
+        self.dismissed_keys: frozenset[str] | None = None
 
     async def setup(self) -> None:
         """No-op: nothing to open."""
@@ -235,6 +240,27 @@ class StubGenomeStore:
     async def failed_artist_keys(self, limit: int = 100) -> list[FailedArtist]:
         """Return whatever a test set on ``failed_artists``, capped at ``limit``."""
         return self.failed_artists[:limit]
+
+    async def retry_failed_artists(self, artist_keys: Sequence[str] | None = None) -> int:
+        """Drop the requested (or all) keys from ``failed_keys``, recording what was retried."""
+        targets = (
+            set(self.failed_keys) if artist_keys is None else set(artist_keys) & self.failed_keys
+        )
+        self.failed_keys -= targets
+        self.retried_keys.extend(sorted(targets))
+        return len(targets)
+
+    async def all_failed_artist_keys(self) -> frozenset[str]:
+        """Return the test-controlled current failed-artist set."""
+        return frozenset(self.failed_keys)
+
+    async def dismiss_unresolved(self, artist_keys: Sequence[str]) -> None:
+        """Record the dismissed fingerprint, for assertions."""
+        self.dismissed_keys = frozenset(artist_keys)
+
+    async def unresolved_dismissed_keys(self) -> frozenset[str] | None:
+        """Return whatever a test set on ``dismissed_keys``; ``None`` by default (never dismissed)."""
+        return self.dismissed_keys
 
 
 @pytest.fixture

@@ -555,7 +555,7 @@ def test_build_genome_full_result_shape_is_stable() -> None:
     result = engine.build_genome(inputs)
     # Pinned as a literal on purpose: adding or removing a GenomeResult field must force
     # this number up, because the cache discards blobs recorded at any other version.
-    assert result["schema_version"] == 5
+    assert result["schema_version"] == 6
     assert result["engine_version"] == engine.ENGINE_VERSION
     assert result["listener"] == "household"
     assert result["stats"]["total_listens"] == 1

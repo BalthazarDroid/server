@@ -696,6 +696,9 @@ def _build_stats(inputs: GenomeInputs, total_w: float) -> GenomeStats:
         artists_pending=0,
         artists_failed=0,
         artists_resolved=0,
+        # overwritten by the controller after a rebuild, same as the three counts above -
+        # see GenomeController._apply_resolution_counts
+        unresolved_dismissed=False,
     )
 
 

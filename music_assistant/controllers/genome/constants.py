@@ -30,7 +30,7 @@ LISTENER_HOUSEHOLD: Final[str] = "household"
 # that module is written, so nothing downstream needs to change.
 ENGINE_VERSION: Final[str] = "1.0.0"
 BASELINE_VERSION: Final[str] = "v1-2026-09"
-GENOME_RESULT_SCHEMA_VERSION: Final[int] = 5  # 4: added LoyaltyFacts effective_* fields
+GENOME_RESULT_SCHEMA_VERSION: Final[int] = 6  # 6: added GenomeStats.unresolved_dismissed
 
 # --- recency weighting defaults (§3.5) ----------------------------------------------
 

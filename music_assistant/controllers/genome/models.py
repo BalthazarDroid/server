@@ -211,6 +211,10 @@ class GenomeStats(TypedDict):
     # folding the second into the first makes a progress notice that never finishes.
     artists_failed: int  # known artists not yet resolved (pending/error resolve_state)
     artists_resolved: int  # known artists with a final resolution (ok/not_found resolve_state)
+    # True only when the artists currently in the `error` resolve state are exactly the set
+    # the user last dismissed via `genome/dismiss_unresolved` - a newly-failing artist (or one
+    # that recovers, changing the set) flips this back to False so the notice returns.
+    unresolved_dismissed: bool
 
 
 class DivergenceFacts(TypedDict):

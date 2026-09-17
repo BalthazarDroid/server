@@ -450,3 +450,103 @@ async def test_pending_artist_keys_retries_a_failure_once_cooled_off(tmp_path: P
         assert [key for key, _name in await store.pending_artist_keys()] == ["a"]
     finally:
         await store.close()
+
+
+async def test_retry_failed_artists_moves_error_rows_back_to_pending(tmp_path: Path) -> None:
+    """`retry_failed_artists` puts `error` rows back in the eligible-now `pending` queue."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "a", "artist_name": "Broken"}], state=RESOLVE_STATE_ERROR
+        )
+        assert await store.pending_artist_keys() == []  # still in error cooldown
+        reset = await store.retry_failed_artists()
+        assert reset == 1
+        assert [key for key, _name in await store.pending_artist_keys()] == ["a"]
+        assert await store.failed_artist_keys() == []
+    finally:
+        await store.close()
+
+
+async def test_retry_failed_artists_with_keys_only_resets_those(tmp_path: Path) -> None:
+    """Passing explicit keys leaves other `error` rows untouched."""
+    store = await _new_store(tmp_path)
+    try:
+        for key in ("a", "b"):
+            await store.upsert_artist_meta_full(
+                [{"artist_key": key, "artist_name": key}], state=RESOLVE_STATE_ERROR
+            )
+        reset = await store.retry_failed_artists(["a"])
+        assert reset == 1
+        assert {row["artist_key"] for row in await store.failed_artist_keys()} == {"b"}
+    finally:
+        await store.close()
+
+
+async def test_retry_failed_artists_returns_zero_for_unknown_keys(tmp_path: Path) -> None:
+    """A key that is not currently `error` (or does not exist) resets nothing."""
+    store = await _new_store(tmp_path)
+    try:
+        assert await store.retry_failed_artists(["nope"]) == 0
+        assert await store.retry_failed_artists([]) == 0
+        assert await store.retry_failed_artists() == 0
+    finally:
+        await store.close()
+
+
+async def test_retry_failed_artists_preserves_resolved_metadata_never_written(
+    tmp_path: Path,
+) -> None:
+    """
+    Reusing `upsert_artist_meta_full` is safe because `error` rows never carry real metadata.
+
+    An `error` row is always written with only `artist_key`/`artist_name` (see
+    `enrich/musicbrainz.py`), so resetting it the same way clobbers nothing.
+    """
+    store = await _new_store(tmp_path)
+    try:
+        await store.upsert_artist_meta_full(
+            [{"artist_key": "a", "artist_name": "Broken"}], state=RESOLVE_STATE_ERROR
+        )
+        await store.retry_failed_artists(["a"])
+        meta = await store.get_artist_meta(["a"])
+        assert meta["a"].mbid is None
+        assert meta["a"].genres == ()
+    finally:
+        await store.close()
+
+
+async def test_all_failed_artist_keys_is_unlimited(tmp_path: Path) -> None:
+    """Unlike `failed_artist_keys`, this reports every `error` artist regardless of count."""
+    store = await _new_store(tmp_path)
+    try:
+        for i in range(5):
+            await store.upsert_artist_meta_full(
+                [{"artist_key": f"artist-{i}", "artist_name": f"Artist {i}"}],
+                state=RESOLVE_STATE_ERROR,
+            )
+        assert await store.all_failed_artist_keys() == {f"artist-{i}" for i in range(5)}
+    finally:
+        await store.close()
+
+
+async def test_dismiss_unresolved_round_trips(tmp_path: Path) -> None:
+    """The dismissed fingerprint survives a write/read round trip."""
+    store = await _new_store(tmp_path)
+    try:
+        assert await store.unresolved_dismissed_keys() is None
+        await store.dismiss_unresolved(["b", "a", "a"])
+        assert await store.unresolved_dismissed_keys() == frozenset({"a", "b"})
+    finally:
+        await store.close()
+
+
+async def test_dismiss_unresolved_overwrites_previous_fingerprint(tmp_path: Path) -> None:
+    """Dismissing again replaces the old fingerprint rather than merging into it."""
+    store = await _new_store(tmp_path)
+    try:
+        await store.dismiss_unresolved(["a"])
+        await store.dismiss_unresolved(["b"])
+        assert await store.unresolved_dismissed_keys() == frozenset({"b"})
+    finally:
+        await store.close()
