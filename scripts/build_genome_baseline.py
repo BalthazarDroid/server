@@ -54,6 +54,20 @@ LISTENBRAINZ_BASE_URL = "https://api.listenbrainz.org"
 # The sitewide endpoint's per-request ceiling. Asking for more returns this many without
 # complaint, which is why a --sample of 1500 quietly produced a 993-artist baseline.
 LISTENBRAINZ_PAGE_LIMIT = 1000
+# Every range ListenBrainz will compute a sitewide chart for, most durable first. Each is
+# capped at its own top 1000, so they are queried in turn to widen the candidate pool; the
+# short ranges are asked last because their tails are the most transient.
+LISTENBRAINZ_RANGES = (
+    "all_time",
+    "year",
+    "half_yearly",
+    "quarter",
+    "month",
+    "week",
+    "this_year",
+    "this_month",
+    "this_week",
+)
 # MusicBrainz proper, not the Music Assistant mirror the SERVER uses.
 #
 # The mirror exists so that running MA instances can resolve metadata cheaply, and it answers
@@ -330,9 +344,11 @@ async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> l
                     "artist_mbid": mbid,
                     "artist_name": artist.get("artist_name", ""),
                     "tags": lookup.get("tags", []),
-                    "total_listen_count": popularity.get(
-                        "total_listen_count", artist.get("listen_count", 0)
-                    ),
+                    # The fallback is only safe for an all-time row. Every other range reports
+                    # a listen count for that window alone, and averaging those together with
+                    # all-time totals would weight a busy week like a busy decade.
+                    "total_listen_count": popularity.get("total_listen_count")
+                    or (artist.get("listen_count", 0) if artist.get("_range") == "all_time" else 0),
                     "total_user_count": popularity.get("total_user_count"),
                     "first_release_year": int(begin[:4]) if begin and begin[:4].isdigit() else None,
                 }
@@ -346,41 +362,66 @@ async def _fetch_live(sample: int, mb_base_url: str = MUSICBRAINZ_BASE_URL) -> l
 
 async def _fetch_top_artists(session: Any, sample: int) -> list[dict[str, Any]]:
     """
-    Page ListenBrainz's sitewide top-artists endpoint up to ``sample`` artists.
+    Gather up to ``sample`` distinct artists from ListenBrainz's sitewide statistics.
 
-    The endpoint serves at most ``LISTENBRAINZ_PAGE_LIMIT`` per request and silently returns
-    that many however much more you ask for - a request for 1500 came back with 1000, which
-    looks like a completed run rather than a truncated one. Paging by offset is the only way
-    past it.
+    ListenBrainz computes only the top 1000 artists PER TIME RANGE. That is a property of the
+    data, not a per-request limit, so offset paging within one range stops dead at 1000 and a
+    --sample of 5000 came back with 993 looking like a finished run. Widening therefore means
+    asking different ranges, not asking the same range harder: the all-time chart and the
+    this-week chart share their head but diverge in the tail, so each adds artists the others
+    do not have.
 
-    Stops early when a page comes back short or repeats, which is how this endpoint signals it
-    has no more to give; without that, asking for more than it holds would loop.
+    The ranges are a way of finding CANDIDATES only. Every artist's weight still comes from the
+    all-time popularity endpoint in :func:`_fetch_live`, so widening the pool this way does not
+    let a this-week listen count contaminate an all-time average.
 
     :param session: An open aiohttp ClientSession.
-    :param sample: How many artists are wanted in total.
+    :param sample: How many distinct artists are wanted in total.
     """
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    offset = 0
-    while len(collected) < sample:
-        page_size = min(LISTENBRAINZ_PAGE_LIMIT, sample - len(collected))
-        payload = await _get_json(
-            session,
-            f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
-            params={"count": str(page_size), "offset": str(offset)},
+
+    for time_range in LISTENBRAINZ_RANGES:
+        if len(collected) >= sample:
+            break
+        before = len(collected)
+        offset = 0
+        while len(collected) < sample:
+            page_size = min(LISTENBRAINZ_PAGE_LIMIT, sample - len(collected))
+            payload = await _get_json(
+                session,
+                f"{LISTENBRAINZ_BASE_URL}/1/stats/sitewide/artists",
+                params={
+                    "count": str(page_size),
+                    "offset": str(offset),
+                    "range": time_range,
+                },
+            )
+            await _pace()
+            page = _unwrap(payload, "artists")
+            if not page:
+                break
+            fresh = []
+            for artist in page:
+                key = artist.get("artist_mbid") or artist.get("artist_name")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                # Remembered so the listen-count fallback in _fetch_live can tell an all-time
+                # figure from a range-scoped one.
+                fresh.append({**artist, "_range": time_range})
+            collected.extend(fresh)
+            if len(page) < page_size or not fresh:
+                break
+            offset += len(page)
+        added = len(collected) - before
+        print(f"  {time_range}: +{added} new (running total {len(collected)})")
+
+    if len(collected) < sample:
+        print(
+            f"  ListenBrainz had {len(collected)} distinct artists to give, not {sample}. "
+            "It computes only the top 1000 per time range, and the ranges overlap heavily."
         )
-        await _pace()
-        page = _unwrap(payload, "artists")
-        if not page:
-            break
-        fresh = [a for a in page if (a.get("artist_mbid") or a.get("artist_name")) not in seen]
-        for artist in fresh:
-            seen.add(artist.get("artist_mbid") or artist.get("artist_name"))
-        collected.extend(fresh)
-        print(f"  fetched {len(collected)} artists from ListenBrainz")
-        if len(page) < page_size or not fresh:
-            break
-        offset += len(page)
     return collected[:sample]
 
 

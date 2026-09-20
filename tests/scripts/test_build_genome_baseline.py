@@ -245,69 +245,124 @@ async def test_request_json_backs_off_harder_each_attempt(
 
 
 class _PagingSession:
-    """Serves a fixed pool of artists through the sitewide endpoint's paging contract."""
+    """
+    Serves ListenBrainz's real shape: a separate, capped chart per time range.
 
-    def __init__(self, pool: int, page_limit: int | None = None) -> None:
-        self.pool = pool
+    Each range holds ``per_range`` artists, and the ranges overlap by ``shared`` artists at the
+    head - which is what makes widening by range worth anything and also what stops it scaling
+    linearly.
+    """
+
+    def __init__(self, per_range: int, shared: int = 0, page_limit: int | None = None) -> None:
+        self.per_range = per_range
+        self.shared = shared
         self.page_limit = page_limit or build_genome_baseline.LISTENBRAINZ_PAGE_LIMIT
-        self.requests: list[tuple[int, int]] = []
+        self.requests: list[tuple[int, int, str]] = []
 
     def request(self, _method: str, _url: str, **kwargs: Any) -> Any:
         params = kwargs.get("params") or {}
         count = int(params.get("count", 25))
         offset = int(params.get("offset", 0))
-        self.requests.append((count, offset))
-        served = min(count, self.page_limit, max(0, self.pool - offset))
-        artists = [
-            {"artist_mbid": f"mbid-{offset + i}", "artist_name": f"Artist {offset + i}"}
-            for i in range(served)
-        ]
+        time_range = params.get("range", "all_time")
+        self.requests.append((count, offset, time_range))
+        served = min(count, self.page_limit, max(0, self.per_range - offset))
+        artists = []
+        for i in range(served):
+            index = offset + i
+            # The first `shared` of every range are the same artists everywhere.
+            key = f"shared-{index}" if index < self.shared else f"{time_range}-{index}"
+            artists.append({"artist_mbid": key, "artist_name": key})
         return _FakeResponse(200, {"payload": {"artists": artists}})
 
 
-async def test_top_artists_pages_past_the_per_request_ceiling(
+async def test_top_artists_widens_across_ranges_when_one_is_exhausted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     The bug this exists for.
 
-    A --sample of 1500 came back with 993, because the endpoint serves at most 1000 per
-    request and says nothing about it - the run looked complete rather than truncated.
+    ListenBrainz computes only the top 1000 artists PER TIME RANGE, so offset paging within
+    one range stops at 1000 no matter what is asked for - a --sample of 5000 returned 993 and
+    looked like a finished run. Reaching further means asking other ranges.
     """
     monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
-    session = _PagingSession(pool=5000)
+    session = _PagingSession(per_range=1000)
     got = await build_genome_baseline._fetch_top_artists(session, 2500)
     assert len(got) == 2500
     assert len({a["artist_mbid"] for a in got}) == 2500
-    assert len(session.requests) > 1
+    assert len({r[2] for r in session.requests}) >= 3
 
 
-async def test_top_artists_stops_when_the_endpoint_runs_out(
+async def test_top_artists_stops_when_every_range_is_used_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Asking for more than exists must end, not loop on an endlessly short page."""
+    """Asking for more than the whole source holds must end, not loop."""
     monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
-    session = _PagingSession(pool=1200)
+    session = _PagingSession(per_range=50)
+    got = await build_genome_baseline._fetch_top_artists(session, 100_000)
+    assert len(got) == 50 * len(build_genome_baseline.LISTENBRAINZ_RANGES)
+
+
+async def test_top_artists_counts_an_artist_once_across_ranges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The ranges share their head, which is the whole reason this does not scale linearly.
+
+    A sample inflated by the same popular artists appearing in nine charts would be worse than
+    a smaller honest one: those artists' genres would be counted nine times over.
+    """
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+    session = _PagingSession(per_range=100, shared=80)
     got = await build_genome_baseline._fetch_top_artists(session, 5000)
-    assert len(got) == 1200
+    keys = [a["artist_mbid"] for a in got]
+    assert len(keys) == len(set(keys))
+    # 80 shared + 20 unique from each of the nine ranges.
+    assert len(keys) == 80 + 20 * len(build_genome_baseline.LISTENBRAINZ_RANGES)
+
+
+async def test_top_artists_starts_with_the_all_time_chart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-time is the most durable reference; the transient ranges only fill the tail."""
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+    session = _PagingSession(per_range=1000)
+    await build_genome_baseline._fetch_top_artists(session, 1500)
+    assert session.requests[0][2] == "all_time"
 
 
 async def test_top_artists_needs_only_one_request_for_a_small_sample(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A sample inside the ceiling must not pay for a second round trip."""
+    """A sample inside one range's chart must not pay for a second round trip."""
     monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
-    session = _PagingSession(pool=5000)
+    session = _PagingSession(per_range=1000)
     got = await build_genome_baseline._fetch_top_artists(session, 400)
     assert len(got) == 400
     assert len(session.requests) == 1
-    assert session.requests[0] == (400, 0)
+    assert session.requests[0][:2] == (400, 0)
 
 
-async def test_top_artists_discards_duplicates_across_pages(
+async def test_top_artists_tags_each_artist_with_the_range_it_came_from(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An endpoint that ignores offset would otherwise inflate the sample with repeats."""
+    """
+    The tag is what keeps a range-scoped listen count out of an all-time average.
+
+    _fetch_live falls back to the chart's own listen_count when the popularity endpoint has
+    nothing, and that figure covers only the chart's window.
+    """
+    monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
+    session = _PagingSession(per_range=10)
+    got = await build_genome_baseline._fetch_top_artists(session, 30)
+    assert all(a["_range"] in build_genome_baseline.LISTENBRAINZ_RANGES for a in got)
+    assert got[0]["_range"] == "all_time"
+
+
+async def test_top_artists_discards_duplicates_when_offset_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An endpoint that ignored offset would otherwise inflate the sample with repeats."""
     monkeypatch.setattr(build_genome_baseline, "_pace", _no_pace)
 
     class _IgnoresOffset(_PagingSession):
@@ -315,6 +370,7 @@ async def test_top_artists_discards_duplicates_across_pages(
             kwargs["params"] = {**(kwargs.get("params") or {}), "offset": "0"}
             return super().request(method, url, **kwargs)
 
-    session = _IgnoresOffset(pool=5000)
+    session = _IgnoresOffset(per_range=500)
     got = await build_genome_baseline._fetch_top_artists(session, 2500)
-    assert len({a["artist_mbid"] for a in got}) == len(got)
+    keys = [a["artist_mbid"] for a in got]
+    assert len(keys) == len(set(keys))
