@@ -90,3 +90,56 @@ async def test_import_play_activity_is_idempotent(tmp_path: Path) -> None:
         assert await store.count_listens("household") == 13
     finally:
         await store.close()
+
+
+async def test_an_unrecognised_header_says_so_instead_of_blaming_the_rows(
+    tmp_path: Path,
+) -> None:
+    """
+    The diagnostic this exists for.
+
+    A real 306,140-row export imported as "0 added, 306140 skipped" with no other word. Every
+    column lookup tolerates a missing column by returning an empty string, so an unrecognised
+    header raises nothing - it just fails each row's "has a title and an artist" test, and the
+    result reads as though the file were full of junk rather than as though the parser could
+    not read its header.
+    """
+    csv_path = tmp_path / "unknown.csv"
+    csv_path.write_text(
+        "Some Column,Another Column\nvalue,other\n",
+        encoding="utf-8",
+    )
+    stats = ApplePlayActivityStats()
+    rows = [row async for row in parse_play_activity(str(csv_path), min_seconds=30, stats=stats)]
+
+    assert rows == []
+    joined = " ".join(stats.warnings)
+    assert "header was not recognised" in joined
+    # It must name what it wanted AND what it found, or the reader cannot act on it.
+    assert "'Artist Name'" in joined
+    assert "'Some Column'" in joined
+
+
+async def test_skip_reasons_are_counted_and_ranked(tmp_path: Path) -> None:
+    """A skipped row records why, so the dominant reason is visible in the total."""
+    csv_path = tmp_path / "mixed.csv"
+    csv_path.write_text(
+        "Song Name,Artist Name,Event Start Timestamp,Play Duration Milliseconds,"
+        "End Reason Type,Event Type,Media Type\n"
+        # kept: a natural end needs no duration
+        "Good,Artist,2024-01-01T00:00:00Z,1000,NATURAL_END_OF_TRACK,PLAY_END,AUDIO\n"
+        # skipped: too brief, and not a natural end
+        "Brief,Artist,2024-01-01T00:00:00Z,1000,STOPPED,PLAY_END,AUDIO\n"
+        "Brief2,Artist,2024-01-01T00:00:00Z,900,STOPPED,PLAY_END,AUDIO\n"
+        # skipped: video
+        "Vid,Artist,2024-01-01T00:00:00Z,999999,NATURAL_END_OF_TRACK,PLAY_END,VIDEO\n",
+        encoding="utf-8",
+    )
+    stats = ApplePlayActivityStats()
+    rows = [row async for row in parse_play_activity(str(csv_path), min_seconds=30, stats=stats)]
+
+    assert [r.track_name for r in rows] == ["Good"]
+    assert stats.rows_skipped == 3
+    assert stats.skip_reasons["played too briefly"] == 2
+    assert stats.skip_reasons["not audio"] == 1
+    assert not any("header was not recognised" in w for w in stats.warnings)

@@ -54,6 +54,15 @@ _HEADER_ALIASES: dict[str, str] = {
     "play duration ms": "Play Duration Milliseconds",
 }
 
+# Without these three there is nothing to import: no title, no artist, no time. Their absence
+# means the header was not understood, which is a different problem from a row being filtered
+# and has to be reported differently - a bare "306140 skipped" says nothing at all.
+_ESSENTIAL_COLUMNS: tuple[str, ...] = (
+    "Song Name",
+    "Artist Name",
+    "Event Start Timestamp",
+)
+
 _NATURAL_END = "NATURAL_END_OF_TRACK"
 _SKIPPED_END_REASONS = frozenset({"NOT_APPLICABLE", "FAILED_TO_LOAD"})
 _ACCEPTED_EVENT_TYPES = frozenset({"PLAY_END", "play", ""})
@@ -65,6 +74,13 @@ _QUEUE_MAXSIZE = 256
 _DONE = object()
 
 
+@dataclass(slots=True, frozen=True)
+class _Skipped:
+    """Why one row was filtered out, so the totals can explain themselves."""
+
+    reason: str
+
+
 @dataclass(slots=True)
 class ApplePlayActivityStats:
     """Mutable row-accounting sidecar for :func:`parse_play_activity`."""
@@ -72,6 +88,18 @@ class ApplePlayActivityStats:
     rows_read: int = 0
     rows_skipped: int = 0
     warnings: list[str] = field(default_factory=list)
+    #: Skip reason -> count. An import that adds nothing is otherwise indistinguishable from
+    #: an import that read a file it did not understand.
+    skip_reasons: dict[str, int] = field(default_factory=dict)
+
+    def note_skip(self, reason: str) -> None:
+        """
+        Record one skipped row under ``reason``.
+
+        :param reason: Short, stable identifier for why the row was filtered.
+        """
+        self.rows_skipped += 1
+        self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + 1
 
 
 async def parse_play_activity(
@@ -96,17 +124,31 @@ async def parse_play_activity(
         try:
             with _open_csv(path) as csv_file:
                 reader = csv.DictReader(csv_file)
-                field_map = _build_field_map(reader.fieldnames or ())
+                headers = list(reader.fieldnames or ())
+                field_map = _build_field_map(headers)
+                # Checked once, up front. Every lookup tolerates a missing column by returning
+                # an empty string, so an unrecognised header does not raise - it quietly fails
+                # every row's "has a title and an artist" test and reports the whole file as
+                # skipped, which looks like the data's fault rather than the parser's.
+                missing = [c for c in _ESSENTIAL_COLUMNS if c not in field_map]
+                if missing:
+                    stats.warnings.append(
+                        "This file's header was not recognised: no column matched "
+                        + ", ".join(repr(c) for c in missing)
+                        + ". Columns found: "
+                        + ", ".join(repr(h) for h in headers[:40])
+                        + ("..." if len(headers) > 40 else "")
+                    )
                 for row in reader:
                     stats.rows_read += 1
                     try:
                         listen = _parse_row(row, field_map, min_seconds=min_seconds)
                     except Exception as err:
-                        stats.rows_skipped += 1
+                        stats.note_skip(f"row error: {type(err).__name__}")
                         stats.warnings.append(f"row {stats.rows_read}: {err}")
                         continue
-                    if listen is None:
-                        stats.rows_skipped += 1
+                    if isinstance(listen, _Skipped):
+                        stats.note_skip(listen.reason)
                         continue
                     loop.call_soon_threadsafe(queue.put_nowait, listen)
         finally:
@@ -181,6 +223,14 @@ async def import_play_activity(
 
     result["rows_read"] = stats.rows_read
     result["rows_skipped"] = stats.rows_skipped
+    # An import that added nothing has to say why. The reasons are ranked because one usually
+    # dominates, and that one is the answer.
+    if stats.skip_reasons:
+        ranked = sorted(stats.skip_reasons.items(), key=lambda kv: -kv[1])
+        stats.warnings.append(
+            "Skipped rows by reason: "
+            + ", ".join(f"{reason} ({count})" for reason, count in ranked[:6])
+        )
     result["warnings"] = stats.warnings
     return result
 
@@ -230,34 +280,34 @@ def _get(row: dict[str, str], field_map: dict[str, str], canonical: str) -> str:
 
 def _parse_row(
     row: dict[str, str], field_map: dict[str, str], *, min_seconds: int
-) -> Listen | None:
-    """Return a :class:`Listen` for one CSV row, or ``None`` if the row is filtered out."""
+) -> Listen | _Skipped:
+    """Return a :class:`Listen` for one CSV row, or a :class:`_Skipped` saying why not."""
     media_type = _get(row, field_map, "Media Type").upper()
     if media_type and "AUDIO" not in media_type:
-        return None
+        return _Skipped("not audio")
     event_type = _get(row, field_map, "Event Type")
     if event_type not in _ACCEPTED_EVENT_TYPES:
-        return None
+        return _Skipped(f"event type {event_type!r}")
     end_reason = _get(row, field_map, "End Reason Type")
     if end_reason in _SKIPPED_END_REASONS:
-        return None
+        return _Skipped(f"end reason {end_reason!r}")
     song_name = _get(row, field_map, "Song Name")
     artist_name = _get(row, field_map, "Artist Name")
     if not song_name or not artist_name:
-        return None
+        return _Skipped("no song or artist name")
     play_duration_ms = _parse_int(_get(row, field_map, "Play Duration Milliseconds"))
     fully_played = end_reason == _NATURAL_END
     if not fully_played and (play_duration_ms is None or play_duration_ms < min_seconds * 1000):
-        return None
+        return _Skipped("played too briefly")
     timestamp_raw = _get(row, field_map, "Event Start Timestamp")
     if not timestamp_raw:
-        return None
+        return _Skipped("no timestamp")
     played_at = _parse_timestamp(timestamp_raw)
     title, _version = parse_title_and_version(song_name, strip_for_search=True)
     track_key = create_safe_string(title)
     artist_key = create_safe_string(artist_name)
     if not track_key or not artist_key:
-        return None
+        return _Skipped("name reduced to nothing")
     album_name = _get(row, field_map, "Album Name") or None
     return Listen(
         played_at=played_at,
