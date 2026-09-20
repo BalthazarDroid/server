@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from music_assistant.controllers.genome.importers.apple_csv import (
     ApplePlayActivityStats,
+    _build_field_map,
     import_play_activity,
     parse_play_activity,
 )
@@ -143,3 +144,82 @@ async def test_skip_reasons_are_counted_and_ranked(tmp_path: Path) -> None:
     assert stats.skip_reasons["played too briefly"] == 2
     assert stats.skip_reasons["not audio"] == 1
     assert not any("header was not recognised" in w for w in stats.warnings)
+
+
+async def test_parses_the_real_export_header() -> None:
+    """
+    The export as Apple actually ships it, header taken verbatim from a real download.
+
+    The previous fixture was written to match the parser's assumed column names, so the tests
+    only ever confirmed the parser agreed with itself. A real 306,140-row export imported
+    nothing at all: the current Apple Media Services export has no "Artist Name" column, and
+    of its 145 columns the only artist is the CONTAINER's.
+    """
+    path = FIXTURES_DIR / "apple_play_activity_real_header.csv"
+    stats = ApplePlayActivityStats()
+    rows = [row async for row in parse_play_activity(str(path), min_seconds=30, stats=stats)]
+
+    # Only the album play survives, and it takes the container artist as its own.
+    assert [(r.artist_name, r.track_name) for r in rows] == [("Sigur Ros", "Svefn-g-englar")]
+    assert not any("header was not recognised" in w for w in stats.warnings)
+
+
+async def test_a_playlist_play_is_skipped_for_want_of_an_artist() -> None:
+    """
+    The export's real gap, and it must be reported as such.
+
+    A track played from a playlist carries no artist anywhere in the row - not blank-ish, not
+    recoverable from another column. Skipping is the only honest answer, and the reason has to
+    say it was the export that lacked the artist, not the row that was malformed.
+    """
+    path = FIXTURES_DIR / "apple_play_activity_real_header.csv"
+    stats = ApplePlayActivityStats()
+    [row async for row in parse_play_activity(str(path), min_seconds=30, stats=stats)]
+
+    assert stats.skip_reasons["no artist name in the export"] == 1
+
+
+async def test_a_compilation_is_not_imported_as_an_artist_called_various_artists() -> None:
+    """
+    "Various Artists" is a container label, not a performer.
+
+    Importing it would invent an artist with no genre and no identity, then let it accumulate
+    plays and distort every figure keyed on the artist - which is all of them.
+    """
+    path = FIXTURES_DIR / "apple_play_activity_real_header.csv"
+    stats = ApplePlayActivityStats()
+    rows = [row async for row in parse_play_activity(str(path), min_seconds=30, stats=stats)]
+
+    assert all(r.artist_name != "Various Artists" for r in rows)
+    assert any("placeholder artist" in reason for reason in stats.skip_reasons)
+
+
+async def test_a_play_start_event_does_not_double_count_its_play_end() -> None:
+    """Every play appears twice in the export; only the END event is a completed listen."""
+    path = FIXTURES_DIR / "apple_play_activity_real_header.csv"
+    stats = ApplePlayActivityStats()
+    rows = [row async for row in parse_play_activity(str(path), min_seconds=30, stats=stats)]
+
+    assert sum(1 for r in rows if r.track_name == "Svefn-g-englar") == 1
+    assert stats.skip_reasons["event type 'PLAY_START'"] == 1
+
+
+def test_an_alias_never_displaces_an_exact_header_match() -> None:
+    """
+    The real export carries both "Event Start Timestamp" and "Event Timestamp".
+
+    Resolving headers in file order let the alias for the second overwrite the exact match for
+    the first. The aliased column is frequently empty, so every row was then discarded for
+    having no timestamp - a whole import lost to a mapping that looked harmless.
+    """
+    field_map = _build_field_map(
+        ["Event Received Timestamp", "Event Start Timestamp", "Event Timestamp", "Song Name"]
+    )
+    assert field_map["Event Start Timestamp"] == "Event Start Timestamp"
+
+
+def test_an_alias_is_still_used_when_the_canonical_column_is_absent() -> None:
+    """Older exports spell it only the aliased way, and must keep working."""
+    field_map = _build_field_map(["Event Timestamp", "Content Name"])
+    assert field_map["Event Start Timestamp"] == "Event Timestamp"
+    assert field_map["Song Name"] == "Content Name"

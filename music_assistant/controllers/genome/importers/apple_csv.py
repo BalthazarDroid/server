@@ -46,13 +46,27 @@ _CANONICAL_COLUMNS: tuple[str, ...] = (
     "Play Count",
 )
 
-# alternate header spellings seen across export vintages, mapped to the canonical name above
+# Alternate header spellings seen across export vintages, mapped to the canonical name above.
+#
+# "Container Artist Name" is the important one and was the reason a real 306,140-row export
+# imported nothing: the current Apple Media Services export has NO "Artist Name" column at all.
+# Of its 140 columns the only artist is the CONTAINER's - the album, playlist or station the
+# track was played from. For an album play that is the album artist, which is the track's artist
+# often enough to be worth having; for a playlist or a radio station it is not the track's
+# artist at all, and is usually blank. See _PLACEHOLDER_ARTISTS for the case where it is present
+# but meaningless.
 _HEADER_ALIASES: dict[str, str] = {
     "track name": "Song Name",
     "content name": "Song Name",
     "event timestamp": "Event Start Timestamp",
     "play duration ms": "Play Duration Milliseconds",
+    "container artist name": "Artist Name",
 }
+
+# A compilation's container artist. Importing these would invent an "artist" with no genre and
+# no identity, then let it accumulate thousands of plays and distort every figure keyed on the
+# artist - which is all of them.
+_PLACEHOLDER_ARTISTS = frozenset({"various artists", "various", "soundtrack", "compilation"})
 
 # Without these three there is nothing to import: no title, no artist, no time. Their absence
 # means the header was not understood, which is a different problem from a row being filtered
@@ -259,13 +273,25 @@ def _open_csv(path: str) -> Any:
 
 
 def _build_field_map(fieldnames: Sequence[str]) -> dict[str, str]:
-    """Map canonical column names to the actual header text present in this file's header row."""
+    """
+    Map canonical column names to the actual header text present in this file's header row.
+
+    Exact matches are taken first and an alias never displaces one. The real export carries both
+    "Event Start Timestamp" and "Event Timestamp"; resolving them in header order let the alias
+    for the second overwrite the exact match for the first, and since the aliased column is
+    often empty, every row was then discarded for having no timestamp.
+
+    :param fieldnames: The header row exactly as the file spells it.
+    """
     canonical_lookup = {name.lower(): name for name in _CANONICAL_COLUMNS}
     field_map: dict[str, str] = {}
     for header in fieldnames:
-        key = header.strip().lower()
-        canonical = _HEADER_ALIASES.get(key) or canonical_lookup.get(key)
-        if canonical:
+        canonical = canonical_lookup.get(header.strip().lower())
+        if canonical and canonical not in field_map:
+            field_map[canonical] = header
+    for header in fieldnames:
+        canonical = _HEADER_ALIASES.get(header.strip().lower())
+        if canonical and canonical not in field_map:
             field_map[canonical] = header
     return field_map
 
@@ -293,8 +319,12 @@ def _parse_row(
         return _Skipped(f"end reason {end_reason!r}")
     song_name = _get(row, field_map, "Song Name")
     artist_name = _get(row, field_map, "Artist Name")
-    if not song_name or not artist_name:
-        return _Skipped("no song or artist name")
+    if not song_name:
+        return _Skipped("no song name")
+    if not artist_name:
+        return _Skipped("no artist name in the export")
+    if artist_name.strip().lower() in _PLACEHOLDER_ARTISTS:
+        return _Skipped(f"placeholder artist {artist_name!r}")
     play_duration_ms = _parse_int(_get(row, field_map, "Play Duration Milliseconds"))
     fully_played = end_reason == _NATURAL_END
     if not fully_played and (play_duration_ms is None or play_duration_ms < min_seconds * 1000):
