@@ -238,13 +238,36 @@ def _create_default_store(mass: MusicAssistant) -> _GenomeStoreProtocol:
 async def _default_apple_parser(
     path: str, *, min_seconds: int, stats: ApplePlayActivityStats | None = None
 ) -> AsyncIterator[Listen]:
-    """Lazily delegate to the real Apple Music CSV parser (owned by a separate work package)."""
+    """
+    Lazily delegate to whichever Apple Music CSV parser this file's header calls for.
+
+    An Apple Media Services export is a folder of fifteen CSVs, and which one carries the
+    listening history is not something a user should have to know: "Apple Music Play Activity"
+    is the obvious name and the wrong file, since its current vintage has no artist column at
+    all. Sniffing the header means either upload works.
+    """
     from music_assistant.controllers.genome.importers.apple_csv import (  # noqa: PLC0415
         parse_play_activity,
     )
+    from music_assistant.controllers.genome.importers.apple_daily_tracks import (  # noqa: PLC0415
+        is_daily_tracks_header,
+        parse_daily_tracks,
+    )
 
-    async for listen in parse_play_activity(path, min_seconds=min_seconds, stats=stats):
+    headers = await asyncio.to_thread(_read_csv_header, path)
+    parser = parse_daily_tracks if is_daily_tracks_header(headers) else parse_play_activity
+    async for listen in parser(path, min_seconds=min_seconds, stats=stats):
         yield listen
+
+
+def _read_csv_header(path: str) -> list[str]:
+    """Read just the header row of a CSV, so a 400MB export is not opened twice in full."""
+    import csv  # noqa: PLC0415
+
+    from music_assistant.controllers.genome.importers.apple_csv import _open_csv  # noqa: PLC0415
+
+    with _open_csv(path) as csv_file:
+        return list(next(csv.reader(csv_file), []))
 
 
 def _default_lastfm_importer_factory(mass: MusicAssistant, *, username: str, api_key: str) -> Any:

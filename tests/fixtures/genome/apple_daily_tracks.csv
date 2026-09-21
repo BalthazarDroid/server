@@ -1,0 +1,9 @@
+Country,"Track Identifier","Media type","Date Played",Hours,"Play Duration Milliseconds","End Reason Type","Source Type","Play Count","Skip Count","Ignore For Recommendations","Track Reference","Track Description"
+US,111,AUDIO,20190511,"1, 4",349617,NATURAL_END_OF_TRACK,LIBRARY,2,0,false,r1,Metric - Black Sheep
+US,222,AUDIO,20190511,4,344987,NATURAL_END_OF_TRACK,LIBRARY,1,0,false,r2,T. Rex - Teenage Dream
+US,333,AUDIO,20190511,5,260968,NATURAL_END_OF_TRACK,LIBRARY,1,0,false,r3,Broken Social Scene - Anthems for a Seventeen Year Old Girl
+US,444,AUDIO,20190512,9,900000,NATURAL_END_OF_TRACK,LIBRARY,3,0,false,r4,Beck - Ramona
+US,555,VIDEO,20190512,9,300000,NATURAL_END_OF_TRACK,LIBRARY,1,0,false,r5,Some Band - A Video
+US,666,AUDIO,20190512,10,4000,TRACK_SKIPPED_FORWARDS,LIBRARY,1,1,false,r6,Skipped Act - Barely Heard
+US,777,AUDIO,20190512,11,300000,NATURAL_END_OF_TRACK,LIBRARY,1,0,false,r7,NoSeparatorHere
+US,888,AUDIO,,12,300000,NATURAL_END_OF_TRACK,LIBRARY,1,0,false,r8,Dateless - Song
