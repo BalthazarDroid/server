@@ -1311,6 +1311,7 @@ class GenomeController(CoreController):
         # ApplePlayActivityStats sidecar is the source of truth for those (docs/STATUS.md).
         result["rows_read"] = stats.rows_read
         result["rows_skipped"] = stats.rows_skipped
+        stats.summarise()
         result["warnings"] = list(stats.warnings)
         LOGGER.info(
             "Apple Music CSV import finished: %d rows read, %d imported, %d skipped, %d duplicate",
@@ -1319,6 +1320,12 @@ class GenomeController(CoreController):
             result["rows_skipped"],
             result["rows_duplicate"],
         )
+        # The counts alone cannot distinguish "this export holds nothing we want" from "we did
+        # not understand this file". The warnings carry that distinction, and the add-on log is
+        # where anyone debugging an import actually looks - so they have to be written here and
+        # not only handed back to the page that requested the import.
+        for warning in result["warnings"]:
+            LOGGER.warning("Apple Music CSV import: %s", warning)
         return result
 
     async def _append_upload_chunk(self, upload_id: str, seq: int, chunk_b64: str) -> None:

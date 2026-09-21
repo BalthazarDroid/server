@@ -223,3 +223,65 @@ def test_an_alias_is_still_used_when_the_canonical_column_is_absent() -> None:
     field_map = _build_field_map(["Event Timestamp", "Content Name"])
     assert field_map["Event Start Timestamp"] == "Event Timestamp"
     assert field_map["Song Name"] == "Content Name"
+
+
+async def test_summarise_folds_the_tally_into_one_ranked_warning(tmp_path: Path) -> None:
+    """
+    The tally has to become a sentence, and one the caller cannot forget to build.
+
+    It was built inside ``import_play_activity``, which the server does not call: the controller
+    drives ``parse_play_activity`` itself. So the real import counted every skip reason and then
+    discarded the count, and a failed import still reported nothing but "306140 skipped".
+    """
+    csv_path = tmp_path / "mixed.csv"
+    csv_path.write_text(
+        "Song Name,Artist Name,Event Start Timestamp,Play Duration Milliseconds,"
+        "End Reason Type,Event Type,Media Type\n"
+        "Brief,Artist,2024-01-01T00:00:00Z,1000,STOPPED,PLAY_END,AUDIO\n"
+        "Brief2,Artist,2024-01-01T00:00:00Z,900,STOPPED,PLAY_END,AUDIO\n"
+        "Vid,Artist,2024-01-01T00:00:00Z,999999,NATURAL_END_OF_TRACK,PLAY_END,VIDEO\n",
+        encoding="utf-8",
+    )
+    stats = ApplePlayActivityStats()
+    [row async for row in parse_play_activity(str(csv_path), min_seconds=30, stats=stats)]
+    stats.summarise()
+
+    line = next(w for w in stats.warnings if w.startswith("Skipped rows by reason:"))
+    # ranked, so the dominant reason is the first thing read
+    assert line.index("played too briefly (2)") < line.index("not audio (1)")
+
+
+def test_summarise_is_idempotent() -> None:
+    """Both the controller and ``import_play_activity`` call it; twice must not read as twice."""
+    stats = ApplePlayActivityStats()
+    stats.note_skip("no timestamp")
+    stats.summarise()
+    stats.summarise()
+    assert len([w for w in stats.warnings if w.startswith("Skipped rows by reason:")]) == 1
+
+
+def test_summarise_says_nothing_when_nothing_was_skipped() -> None:
+    """A clean import must not carry a warning that lists no reasons."""
+    stats = ApplePlayActivityStats()
+    stats.summarise()
+    assert stats.warnings == []
+
+
+async def test_bad_rows_do_not_produce_one_warning_each(tmp_path: Path) -> None:
+    """A wholly unparseable export must yield a report, not a second copy of the file."""
+    header = (
+        "Song Name,Artist Name,Event Start Timestamp,Play Duration Milliseconds,"
+        "End Reason Type,Event Type,Media Type\n"
+    )
+    bad = "Song,Artist,not-a-timestamp,1000,NATURAL_END_OF_TRACK,PLAY_END,AUDIO\n"
+    csv_path = tmp_path / "bad.csv"
+    csv_path.write_text(header + bad * 200, encoding="utf-8")
+
+    stats = ApplePlayActivityStats()
+    rows = [row async for row in parse_play_activity(str(csv_path), min_seconds=30, stats=stats)]
+
+    assert rows == []
+    assert stats.rows_skipped == 200
+    assert len(stats.warnings) <= 10
+    stats.summarise()
+    assert any("row error: ValueError" in w for w in stats.warnings)

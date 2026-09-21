@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from unittest import mock
 
 import pytest
@@ -432,6 +433,63 @@ async def test_apple_import_propagates_parser_warnings_and_rows_skipped(
     assert result["rows_skipped"] == 2
     assert result["rows_imported"] == 1
     assert result["warnings"] == ["row 2: missing artist name"]
+    assert len(genome_store.listens) == 1
+
+
+async def test_apple_import_writes_its_warnings_to_the_log(
+    genome_controller: GenomeController,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    An import that explains itself only to the page explains itself to nobody.
+
+    A real 306,140-row export imported nothing twice over. The parser had been taught to say
+    why - an unrecognised header, a ranked tally of skip reasons - and every word of it went
+    into the result handed back to the import panel, which showed three counts and no text.
+    The add-on log, the one place anyone looks when an import fails, said only "0 imported".
+    """
+    genome_controller._apple_parser = _fake_apple_parser_with_skips
+    genome_controller.get_config_value = lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+        "/some/dir" if key == CONF_APPLE_IMPORT_DIR else default
+    )
+    with caplog.at_level(logging.WARNING):
+        await genome_controller.import_apple(
+            "", 0, "", final=True, filename="Apple Music Play Activity.csv"
+        )
+    assert any("missing artist name" in record.getMessage() for record in caplog.records)
+
+
+async def test_apple_import_logs_the_skip_tally_the_controller_now_builds(
+    genome_controller: GenomeController,
+    genome_store: StubGenomeStore,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    The ranked tally lived in ``import_play_activity``, which this controller never calls.
+
+    So the counts were gathered on every real import and thrown away. The controller has to
+    close the tally itself, or the diagnostic exists only on a code path nothing walks.
+    """
+
+    async def parser(path: str, *, min_seconds: int, stats=None):  # noqa: ARG001
+        if stats is not None:
+            stats.rows_read = 4
+            stats.note_skip("no artist name in the export")
+            stats.note_skip("no artist name in the export")
+            stats.note_skip("not audio")
+        yield _listen(source="apple_export")
+
+    genome_controller._apple_parser = parser
+    genome_controller.get_config_value = lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+        "/some/dir" if key == CONF_APPLE_IMPORT_DIR else default
+    )
+    with caplog.at_level(logging.WARNING):
+        result = await genome_controller.import_apple(
+            "", 0, "", final=True, filename="Apple Music Play Activity.csv"
+        )
+    tally = next(w for w in result["warnings"] if w.startswith("Skipped rows by reason:"))
+    assert "no artist name in the export (2)" in tally
+    assert any("Skipped rows by reason" in record.getMessage() for record in caplog.records)
     assert len(genome_store.listens) == 1
 
 

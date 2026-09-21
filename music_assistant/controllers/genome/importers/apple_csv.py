@@ -85,6 +85,9 @@ _ACCEPTED_EVENT_TYPES = frozenset({"PLAY_END", "play", ""})
 # generator this module exposes; a bounded size keeps memory flat on a very large export
 _QUEUE_MAXSIZE = 256
 
+# Cap on individual bad-row warnings; the ranked tally carries the rest.
+_MAX_ROW_WARNINGS = 8
+
 _DONE = object()
 
 
@@ -105,6 +108,7 @@ class ApplePlayActivityStats:
     #: Skip reason -> count. An import that adds nothing is otherwise indistinguishable from
     #: an import that read a file it did not understand.
     skip_reasons: dict[str, int] = field(default_factory=dict)
+    _summarised: bool = False
 
     def note_skip(self, reason: str) -> None:
         """
@@ -114,6 +118,23 @@ class ApplePlayActivityStats:
         """
         self.rows_skipped += 1
         self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + 1
+
+    def summarise(self) -> None:
+        """
+        Fold the skip tally into ``warnings`` as one ranked line.
+
+        Called once when parsing is finished, by every caller that reports on an import. It
+        lived inside :func:`import_play_activity` before, which is not the function the server
+        actually runs - so the real import produced the tally and then threw it away.
+        """
+        if self._summarised or not self.skip_reasons:
+            return
+        self._summarised = True
+        ranked = sorted(self.skip_reasons.items(), key=lambda kv: -kv[1])
+        self.warnings.append(
+            "Skipped rows by reason: "
+            + ", ".join(f"{reason} ({count})" for reason, count in ranked[:6])
+        )
 
 
 async def parse_play_activity(
@@ -159,7 +180,11 @@ async def parse_play_activity(
                         listen = _parse_row(row, field_map, min_seconds=min_seconds)
                     except Exception as err:
                         stats.note_skip(f"row error: {type(err).__name__}")
-                        stats.warnings.append(f"row {stats.rows_read}: {err}")
+                        # One line per bad row would be 300k warnings on a broken export, which
+                        # is not a report, it is the file again. A handful of examples plus the
+                        # ranked tally from summarise() says the same thing.
+                        if len(stats.warnings) < _MAX_ROW_WARNINGS:
+                            stats.warnings.append(f"row {stats.rows_read}: {err}")
                         continue
                     if isinstance(listen, _Skipped):
                         stats.note_skip(listen.reason)
@@ -239,12 +264,7 @@ async def import_play_activity(
     result["rows_skipped"] = stats.rows_skipped
     # An import that added nothing has to say why. The reasons are ranked because one usually
     # dominates, and that one is the answer.
-    if stats.skip_reasons:
-        ranked = sorted(stats.skip_reasons.items(), key=lambda kv: -kv[1])
-        stats.warnings.append(
-            "Skipped rows by reason: "
-            + ", ".join(f"{reason} ({count})" for reason, count in ranked[:6])
-        )
+    stats.summarise()
     result["warnings"] = stats.warnings
     return result
 
