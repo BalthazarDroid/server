@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import types
 from typing import TYPE_CHECKING
 
@@ -285,3 +286,59 @@ async def test_bad_rows_do_not_produce_one_warning_each(tmp_path: Path) -> None:
     assert len(stats.warnings) <= 10
     stats.summarise()
     assert any("row error: ValueError" in w for w in stats.warnings)
+
+
+async def test_a_file_larger_than_the_queue_delivers_every_row(tmp_path: Path) -> None:
+    """
+    The bug that hung a real import at 40%.
+
+    The reader thread handed rows across with ``put_nowait`` on a queue bounded at 256. Once it
+    outran the consumer, every further row raised ``QueueFull`` inside an event-loop callback:
+    the row was dropped and a traceback logged in its place, thousands of times, until the
+    server was too busy logging to answer anything.
+
+    It stayed invisible while the parser found no artist and yielded nothing at all, so the
+    queue could never fill. 2,000 rows is eight times the bound - enough that a producer which
+    does not wait cannot possibly deliver them all.
+    """
+    header = (
+        "Song Name,Artist Name,Event Start Timestamp,Play Duration Milliseconds,"
+        "End Reason Type,Event Type,Media Type\n"
+    )
+    rows = "".join(
+        f"Song {i},Artist {i},2024-01-01T00:00:00Z,999999,NATURAL_END_OF_TRACK,PLAY_END,AUDIO\n"
+        for i in range(2_000)
+    )
+    csv_path = tmp_path / "big.csv"
+    csv_path.write_text(header + rows, encoding="utf-8")
+
+    stats = ApplePlayActivityStats()
+    got = [row async for row in parse_play_activity(str(csv_path), min_seconds=30, stats=stats)]
+
+    assert len(got) == 2_000
+    assert stats.rows_read == 2_000
+    assert stats.rows_skipped == 0
+
+
+async def test_abandoning_the_stream_early_does_not_hang(tmp_path: Path) -> None:
+    """
+    A consumer that stops reading must not leave the producer blocked forever.
+
+    Making the producer wait for room is the fix above; waiting forever on a consumer that has
+    gone away would trade a flood of tracebacks for a deadlocked import thread.
+    """
+    header = (
+        "Song Name,Artist Name,Event Start Timestamp,Play Duration Milliseconds,"
+        "End Reason Type,Event Type,Media Type\n"
+    )
+    rows = "".join(
+        f"Song {i},Artist {i},2024-01-01T00:00:00Z,999999,NATURAL_END_OF_TRACK,PLAY_END,AUDIO\n"
+        for i in range(2_000)
+    )
+    csv_path = tmp_path / "abandoned.csv"
+    csv_path.write_text(header + rows, encoding="utf-8")
+
+    stream = parse_play_activity(str(csv_path), min_seconds=30)
+    first = await anext(stream)
+    assert first.track_name == "Song 0"
+    await asyncio.wait_for(stream.aclose(), timeout=10)

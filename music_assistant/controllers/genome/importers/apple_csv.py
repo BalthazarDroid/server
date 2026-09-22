@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -85,10 +86,61 @@ _ACCEPTED_EVENT_TYPES = frozenset({"PLAY_END", "play", ""})
 # generator this module exposes; a bounded size keeps memory flat on a very large export
 _QUEUE_MAXSIZE = 256
 
+# How long a producer waits for room before checking whether the consumer has gone away.
+_PUT_TIMEOUT_SECONDS = 1.0
+
 # Cap on individual bad-row warnings; the ranked tally carries the rest.
 _MAX_ROW_WARNINGS = 8
 
 _DONE = object()
+
+
+class _RowPipe:
+    """
+    Hands parsed rows from the blocking csv reader thread to the async consumer.
+
+    The bound is the point: a 400MB export must not be held in memory at once. But a bounded
+    queue has to be able to say "wait", and ``put_nowait`` cannot - it raises ``QueueFull``, and
+    from inside ``call_soon_threadsafe`` that lands in the event loop's exception handler, so
+    the row is dropped and a traceback is logged in its place. A reader that outruns its
+    consumer by a few hundred rows then logs a traceback per row for the rest of the file, which
+    is what an import of 306,140 rows looked like: a progress bar stopped at 40% and a server
+    too busy logging to answer anything.
+
+    This was latent for as long as the parser found no artist and therefore yielded nothing.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, *, maxsize: int = _QUEUE_MAXSIZE) -> None:
+        self._loop = loop
+        self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
+        self._abandoned = threading.Event()
+
+    def put(self, item: Any) -> bool:
+        """
+        Block the producer thread until the consumer has room. False if it has given up.
+
+        :param item: The row (or sentinel) to hand across.
+        """
+        while not self._abandoned.is_set():
+            future = asyncio.run_coroutine_threadsafe(self._queue.put(item), self._loop)
+            try:
+                future.result(timeout=_PUT_TIMEOUT_SECONDS)
+            except TimeoutError:
+                # Re-check for abandonment, then try again - unless the put landed in the race,
+                # in which case cancel() fails and the item is already across.
+                if not future.cancel():
+                    return True
+                continue
+            return True
+        return False
+
+    async def get(self) -> Any:
+        """Await the next row from the producer."""
+        return await self._queue.get()
+
+    def abandon(self) -> None:
+        """Tell a blocked producer the consumer is gone, so it stops instead of deadlocking."""
+        self._abandoned.set()
 
 
 @dataclass(slots=True, frozen=True)
@@ -152,8 +204,7 @@ async def parse_play_activity(
     :param stats: Optional row-accounting sidecar, filled in as parsing proceeds.
     """
     stats = stats if stats is not None else ApplePlayActivityStats()
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[Listen | object] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+    pipe = _RowPipe(asyncio.get_running_loop())
 
     def producer() -> None:
         try:
@@ -189,18 +240,20 @@ async def parse_play_activity(
                     if isinstance(listen, _Skipped):
                         stats.note_skip(listen.reason)
                         continue
-                    loop.call_soon_threadsafe(queue.put_nowait, listen)
+                    if not pipe.put(listen):
+                        return
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+            pipe.put(_DONE)
 
     producer_task = asyncio.create_task(asyncio.to_thread(producer))
     try:
         while True:
-            item = await queue.get()
+            item = await pipe.get()
             if item is _DONE:
                 break
-            yield item  # type: ignore[misc]
+            yield item
     finally:
+        pipe.abandon()
         await producer_task
 
 

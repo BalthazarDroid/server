@@ -27,6 +27,7 @@ from music_assistant.controllers.genome.importers.apple_csv import (
     ApplePlayActivityStats,
     _open_csv,
     _parse_int,
+    _RowPipe,
     _Skipped,
 )
 from music_assistant.controllers.genome.models import Listen
@@ -46,7 +47,6 @@ _NATURAL_END = "NATURAL_END_OF_TRACK"
 # day spent on one song. Apple has been seen to emit absurd counts for a stuck player.
 _MAX_PLAYS_PER_DAY = 100
 
-_QUEUE_MAXSIZE = 256
 _MAX_ROW_WARNINGS = 8
 _DONE = object()
 
@@ -76,8 +76,7 @@ async def parse_daily_tracks(
     :param stats: Optional row-accounting sidecar, filled in as parsing proceeds.
     """
     stats = stats if stats is not None else ApplePlayActivityStats()
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[Listen | object] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+    pipe = _RowPipe(asyncio.get_running_loop())
 
     def producer() -> None:
         try:
@@ -106,18 +105,22 @@ async def parse_daily_tracks(
                         stats.note_skip(listens.reason)
                         continue
                     for listen in listens:
-                        loop.call_soon_threadsafe(queue.put_nowait, listen)
+                        # A day row can expand into many plays, so this outruns the consumer
+                        # far faster than a one-row-one-listen reader would.
+                        if not pipe.put(listen):
+                            return
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+            pipe.put(_DONE)
 
     producer_task = asyncio.create_task(asyncio.to_thread(producer))
     try:
         while True:
-            item = await queue.get()
+            item = await pipe.get()
             if item is _DONE:
                 break
-            yield item  # type: ignore[misc]
+            yield item
     finally:
+        pipe.abandon()
         await producer_task
 
 
