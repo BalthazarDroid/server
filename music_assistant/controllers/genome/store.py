@@ -108,6 +108,11 @@ class ArtistMetaWrite(TypedDict, total=False):
 class GenomeStore:
     """Owns ``genome.db``: schema, migrations, and typed reads/writes for the Genome controller."""
 
+    @property
+    def db_path(self) -> str:
+        """Filesystem path of ``genome.db``."""
+        return os.path.join(self.mass.storage_path, "genome.db")
+
     def __init__(self, mass: MusicAssistant) -> None:
         """
         Initialize the store.
@@ -119,7 +124,7 @@ class GenomeStore:
 
     async def setup(self) -> None:
         """Open (creating if needed) ``genome.db`` and run the schema-version handshake."""
-        db_path = os.path.join(self.mass.storage_path, "genome.db")
+        db_path = self.db_path
         self.database = DatabaseConnection(db_path)
         await self.database.setup()
 

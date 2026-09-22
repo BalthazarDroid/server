@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import sqlite3
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -828,3 +830,59 @@ async def test_enrich_pending_is_noop_with_no_backlog(
     """An empty popularity backlog (the default stub state) must not raise."""
     resolved = await genome_controller._enrich_pending()
     assert resolved == 0
+
+
+async def test_export_db_writes_a_readable_snapshot(
+    genome_controller: GenomeController, tmp_path: Path
+) -> None:
+    """
+    The one step of the HACS migration that cannot be undone if it is skipped.
+
+    Most of genome.db is rebuildable from its sources - the Last.fm and Apple imports are
+    repeatable. The live-captured plays are not: they were recorded from the playlog as they
+    happened and exist nowhere else.
+    """
+    source = tmp_path / "genome.db"
+    connection = sqlite3.connect(source)
+    connection.execute("CREATE TABLE listens (id INTEGER PRIMARY KEY, name TEXT)")
+    connection.execute("INSERT INTO listens (name) VALUES ('kept')")
+    connection.commit()
+    connection.close()
+
+    destination = tmp_path / "share"
+    destination.mkdir()
+    genome_controller.store.db_path = str(source)  # type: ignore[misc]
+
+    result = await genome_controller.export_db(directory=str(destination))
+
+    written = Path(result["path"])
+    assert written.parent == destination
+    assert result["bytes"] > 0
+    # A snapshot that cannot be opened is worse than no snapshot, because it looks like one.
+    copy = sqlite3.connect(written)
+    try:
+        assert copy.execute("SELECT name FROM listens").fetchall() == [("kept",)]
+    finally:
+        copy.close()
+
+
+async def test_export_db_refuses_a_directory_that_is_not_there(
+    genome_controller: GenomeController, tmp_path: Path
+) -> None:
+    """A typo in the destination must fail loudly, not silently write nowhere."""
+    source = tmp_path / "genome.db"
+    sqlite3.connect(source).close()
+    genome_controller.store.db_path = str(source)  # type: ignore[misc]
+
+    with pytest.raises(InvalidDataError, match="does not exist"):
+        await genome_controller.export_db(directory=str(tmp_path / "nope"))
+
+
+async def test_export_db_refuses_when_there_is_no_database_yet(
+    genome_controller: GenomeController, tmp_path: Path
+) -> None:
+    """Exporting nothing would hand back an empty file that reads as a successful backup."""
+    genome_controller.store.db_path = str(tmp_path / "missing.db")  # type: ignore[misc]
+
+    with pytest.raises(InvalidDataError, match="No genome database"):
+        await genome_controller.export_db(directory=str(tmp_path))

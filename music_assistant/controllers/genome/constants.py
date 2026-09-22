@@ -138,6 +138,11 @@ GENOME_REBUILD_TASK_ID: Final[str] = "genome_rebuild"
 GENOME_LASTFM_POLL_TASK_ID: Final[str] = "genome_lastfm_poll"
 
 GENOME_UPLOADS_DIRNAME: Final[str] = "genome_uploads"
+
+# Default destination for the TEMPORARY genome/export_db command. "/share" is mounted into the
+# app and visible from the file editor and Samba, which is the point: the database itself lives
+# in the app's private /data, where nothing outside the container can reach it.
+GENOME_EXPORT_DIR: Final[str] = "/share"
 GENOME_UPLOAD_CHUNK_MAX_B64_BYTES: Final[int] = 512 * 1024
 GENOME_UPLOAD_MAX_TOTAL_BYTES: Final[int] = 512 * 1024 * 1024
 GENOME_UPLOAD_TTL_SECONDS: Final[int] = 15 * 60

@@ -17,7 +17,7 @@ import contextlib
 import os
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec, Protocol, TypeVar, cast
@@ -72,6 +72,7 @@ from .constants import (
     GENOME_DISCOVERY_TASK_ID,
     GENOME_ENRICHMENT_BATCH_LIMIT,
     GENOME_ENRICHMENT_TASK_ID,
+    GENOME_EXPORT_DIR,
     GENOME_LASTFM_POLL_TASK_ID,
     GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
     GENOME_REBUILD_TASK_ID,
@@ -560,6 +561,44 @@ class GenomeController(CoreController):
         ):
             self.mass.create_task(self._background_enrichment())
         return result
+
+    @api_command("genome/export_db", required_scope=Scope.LIBRARY_MANAGE)
+    @_log_command_errors("genome/export_db")
+    async def export_db(self, directory: str = GENOME_EXPORT_DIR) -> dict[str, Any]:
+        """
+        Write a consistent snapshot of ``genome.db`` somewhere reachable from outside the app.
+
+        TEMPORARY. This exists so the listening history survives the move to a standalone
+        Home Assistant integration, and should be deleted once that migration is done.
+
+        Most of this database can be rebuilt from its sources - the Last.fm and Apple imports
+        are repeatable. The live-captured plays cannot: they were recorded from the playlog as
+        they happened and exist nowhere else. That is what this is protecting.
+
+        The copy goes through sqlite's own backup API rather than a file copy, because the
+        database is open and being written to; copying the file would capture a torn page or
+        miss the write-ahead log and produce something that only looks like a database.
+
+        :param directory: Where to write the snapshot. Defaults to the app's ``/share`` mount.
+        """
+        store_path = self.store.db_path
+        if not Path(store_path).exists():
+            msg = f"No genome database at {store_path}"
+            raise InvalidDataError(msg)
+        if not Path(directory).is_dir():
+            msg = (
+                f"{directory} does not exist. Pass a directory this app can write to - "
+                "'/share' and '/media' are the usual ones."
+            )
+            raise InvalidDataError(msg)
+
+        stamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
+        target = os.path.join(directory, f"genome-export-{stamp}.db")
+        await asyncio.to_thread(_backup_sqlite, store_path, target)
+        size = await asyncio.to_thread(os.path.getsize, target)
+        listens = await self.store.count_listens(LISTENER_HOUSEHOLD)
+        LOGGER.info("Genome database exported to %s (%d bytes, %d listens)", target, size, listens)
+        return {"path": target, "bytes": size, "listens": listens}
 
     @api_command("genome/discovery", required_scope=Scope.LIBRARY_READ)
     @_log_command_errors("genome/discovery")
@@ -1476,3 +1515,23 @@ def _empty_import_result(source: str) -> GenomeImportResult:
 
 
 __all__ = ["GenomeController"]
+
+
+def _backup_sqlite(source: str, target: str) -> None:
+    """
+    Copy a live sqlite database to ``target`` as a consistent snapshot.
+
+    :param source: Path of the database to read.
+    :param target: Path to write the snapshot to.
+    """
+    import sqlite3  # noqa: PLC0415
+
+    src = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    try:
+        dst = sqlite3.connect(target)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()

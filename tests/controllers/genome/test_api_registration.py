@@ -94,6 +94,7 @@ _SAMPLE_ARGS: dict[str, dict[str, Any]] = {
     },
     "import_lastfm": {"username": "Bob_Baird", "max_pages": 1},
     "get_settings": {},
+    "export_db": {"directory": "/share"},
     "discovery": {"listener": "household"},
     "discovery_refresh": {"listener": "household"},
     "set_settings": {"settings": {"lastfm_username": "Bob_Baird", "lastfm_api_key": "a" * 32}},
