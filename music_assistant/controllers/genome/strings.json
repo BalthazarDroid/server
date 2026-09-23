@@ -62,7 +62,7 @@
       "result": "All genome data has been cleared"
     },
     "export_db": {
-      "result": "Exported {0} listens to {1}"
+      "started": "Export started. The result, including where the file was written, appears on the Listening Genome import page."
     }
   },
   "background_task": {

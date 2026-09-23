@@ -47,6 +47,7 @@ def test_controller_exposes_api_commands() -> None:
         "set_settings",
         "discovery",
         "discovery_refresh",
+        "get_jobs",
     } <= names
 
 
@@ -94,6 +95,7 @@ _SAMPLE_ARGS: dict[str, dict[str, Any]] = {
     },
     "import_lastfm": {"username": "Bob_Baird", "max_pages": 1},
     "get_settings": {},
+    "get_jobs": {},
     "export_db": {"directory": "/share"},
     "discovery": {"listener": "household"},
     "discovery_refresh": {"listener": "household"},

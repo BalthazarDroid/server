@@ -148,6 +148,9 @@ class StubGenomeStore:
         # read path serves; `artist_plays` stands in for the per-artist listen counts
         self.discovery: dict[str, dict[str, Any]] = {}
         self.artist_plays: dict[str, int] = {}
+        # job-tracker test double (controllers/genome/jobs.py) - the single json settings row
+        # the real store keeps. A test can seed it to stand in for a previous process.
+        self.jobs: dict[str, Any] = {}
 
     async def setup(self) -> None:
         """No-op: nothing to open."""
@@ -288,6 +291,14 @@ class StubGenomeStore:
         """Return whatever a test set on ``artist_plays``."""
         return dict(self.artist_plays)
 
+    async def set_jobs(self, data: dict) -> None:
+        """Persist the job map in memory, exactly as one json settings row would."""
+        self.jobs = dict(data)
+
+    async def get_jobs(self) -> dict:
+        """Return the persisted job map; empty until something has been recorded."""
+        return dict(self.jobs)
+
 
 @pytest.fixture
 def genome_store() -> StubGenomeStore:
@@ -303,7 +314,14 @@ def mass_stub() -> MagicMock:
     mass.tasks.register_scheduled_task = MagicMock()
     # MA's real `create_task` schedules the coroutine; a bare MagicMock would swallow it,
     # so anything dispatched to the background would silently never run under test.
-    mass.create_task = lambda coro, *_a, **_kw: asyncio.ensure_future(coro)
+    mass.created_tasks = []
+
+    def _create_task(coro, *_a, **_kw):
+        task = asyncio.ensure_future(coro)
+        mass.created_tasks.append(task)
+        return task
+
+    mass.create_task = _create_task
     mass.config.get_raw_core_config_value = MagicMock(return_value="GLOBAL")
     return mass
 

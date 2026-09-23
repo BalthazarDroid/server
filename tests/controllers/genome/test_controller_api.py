@@ -11,9 +11,9 @@ import asyncio
 import base64
 import logging
 import sqlite3
-from functools import partial
 from pathlib import Path
 from unittest import mock
+from unittest.mock import MagicMock
 
 import pytest
 from music_assistant_models.enums import ConfigEntryType
@@ -32,6 +32,10 @@ from music_assistant.controllers.genome.constants import (
 )
 from music_assistant.controllers.genome.controller import GenomeController
 from music_assistant.controllers.genome.errors import LastfmNotConfiguredError
+from music_assistant.controllers.genome.jobs import (
+    JOB_EXPORT_DB,
+    JOB_LASTFM_IMPORT,
+)
 from music_assistant.controllers.genome.models import (
     GenomeImportResult,
     GenomeSettingsPatch,
@@ -582,7 +586,7 @@ async def test_import_lastfm_with_only_username_reports_missing_api_key(
 
 
 async def test_import_lastfm_unexpected_failure_logged_as_error(
-    genome_controller: GenomeController, caplog: pytest.LogCaptureFixture
+    genome_controller: GenomeController, mass_stub: MagicMock, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An unanticipated failure (a bug, not a user-correctable problem) gets ERROR + traceback."""
     genome_controller.get_config_value = (  # type: ignore[method-assign]
@@ -598,11 +602,130 @@ async def test_import_lastfm_unexpected_failure_logged_as_error(
         raise RuntimeError(msg)
 
     genome_controller._lastfm_importer_factory = _boom  # type: ignore[method-assign]
-    with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
+    with caplog.at_level("DEBUG"):
         await genome_controller.import_lastfm()
+        await mass_stub.created_tasks[-1]
     error_records = [r for r in caplog.records if r.levelname == "ERROR"]
     assert any("genome/import_lastfm" in r.message for r in error_records)
     assert any(r.exc_info is not None for r in error_records)
+
+
+async def test_failed_background_import_records_the_reason_not_just_a_failure(
+    genome_controller: GenomeController, mass_stub: MagicMock
+) -> None:
+    """
+    A background job that dies has to leave the reason behind, or nobody ever learns it.
+
+    The whole point of moving the import off the websocket request is that the user can navigate
+    away. If the job records only "error", the one thing they came back for - why it failed - is
+    exactly what is missing, and the old bug (a progress bar and no explanation) is back.
+    """
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+            "someuser" if key == CONF_LASTFM_USERNAME else "0" * 32
+        )
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        msg = "last.fm said 403 Forbidden"
+        raise RuntimeError(msg)
+
+    genome_controller._lastfm_importer_factory = _boom  # type: ignore[method-assign]
+    await genome_controller.import_lastfm()
+    await mass_stub.created_tasks[-1]
+
+    job = (await genome_controller.get_jobs())[JOB_LASTFM_IMPORT]
+    assert job["state"] == "error"
+    assert "403 Forbidden" in job["message"]
+    assert job["finished_at"] is not None
+
+
+async def test_import_lastfm_returns_immediately_with_a_running_job(
+    genome_controller: GenomeController, mass_stub: MagicMock
+) -> None:
+    """
+    A paginated history sweep must not be what the websocket request is waiting on.
+
+    It can run for minutes; the request has to hand back the job handle and let the page move on.
+    """
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+            "someuser" if key == CONF_LASTFM_USERNAME else "0" * 32
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    def _factory(_mass: object, **_kw: object) -> object:
+        class _Importer:
+            async def import_since(self, _store: object, **_kw: object) -> GenomeImportResult:
+                started.set()
+                await release.wait()
+                return GenomeImportResult(
+                    source="lastfm",
+                    rows_read=0,
+                    rows_imported=0,
+                    rows_skipped=0,
+                    rows_duplicate=0,
+                    first_played_at=None,
+                    last_played_at=None,
+                    warnings=[],
+                )
+
+        return _Importer()
+
+    genome_controller._lastfm_importer_factory = _factory  # type: ignore[assignment]
+
+    state = await genome_controller.import_lastfm()
+
+    assert state["state"] == "running"
+    # the import is genuinely still in flight - the request did not secretly await it
+    await started.wait()
+    assert not mass_stub.created_tasks[-1].done()
+    release.set()
+    await mass_stub.created_tasks[-1]
+
+
+async def test_import_lastfm_records_the_row_counts_a_person_needs(
+    genome_controller: GenomeController, mass_stub: MagicMock
+) -> None:
+    """
+    The recorded message is the whole result once the page that asked for it is gone.
+
+    "Import finished" would be useless: what the user came back for is how many rows landed.
+    """
+    genome_controller.get_config_value = (  # type: ignore[method-assign]
+        lambda key, default=None, *, return_type=None: (  # noqa: ARG005
+            "someuser" if key == CONF_LASTFM_USERNAME else "0" * 32
+        )
+    )
+
+    def _factory(_mass: object, **_kw: object) -> object:
+        class _Importer:
+            async def import_since(self, _store: object, **_kw: object) -> GenomeImportResult:
+                return GenomeImportResult(
+                    source="lastfm",
+                    rows_read=120,
+                    rows_imported=97,
+                    rows_skipped=20,
+                    rows_duplicate=3,
+                    first_played_at=None,
+                    last_played_at=None,
+                    warnings=["3 scrobbles had no timestamp"],
+                )
+
+        return _Importer()
+
+    genome_controller._lastfm_importer_factory = _factory  # type: ignore[assignment]
+    await genome_controller.import_lastfm()
+    await mass_stub.created_tasks[-1]
+
+    job = (await genome_controller.get_jobs())[JOB_LASTFM_IMPORT]
+    assert job["state"] == "ok"
+    assert "97 imported" in job["message"]
+    assert "20 skipped" in job["message"]
+    assert "3 duplicate" in job["message"]
+    assert "3 scrobbles had no timestamp" in job["message"]
 
 
 # ---------------------------------------------------------------------------------------
@@ -673,7 +796,7 @@ async def test_import_lastfm_rejects_malformed_api_key(
 
 @pytest.mark.asyncio
 async def test_import_lastfm_accepts_a_well_formed_key_with_whitespace(
-    genome_controller: GenomeController,
+    genome_controller: GenomeController, mass_stub: MagicMock
 ) -> None:
     """A key that is valid apart from stray copy-paste whitespace is accepted and trimmed."""
     key = "a" * 32
@@ -692,9 +815,11 @@ async def test_import_lastfm_accepts_a_well_formed_key_with_whitespace(
                 return GenomeImportResult(
                     source="lastfm",
                     rows_read=0,
-                    rows_added=0,
+                    rows_imported=0,
                     rows_duplicate=0,
                     rows_skipped=0,
+                    first_played_at=None,
+                    last_played_at=None,
                     warnings=[],
                 )
 
@@ -702,6 +827,7 @@ async def test_import_lastfm_accepts_a_well_formed_key_with_whitespace(
 
     genome_controller._lastfm_importer_factory = _factory  # type: ignore[assignment]
     await genome_controller.import_lastfm()
+    await mass_stub.created_tasks[-1]
     assert captured["api_key"] == key
 
 
@@ -857,8 +983,9 @@ async def test_export_db_writes_a_readable_snapshot(
     destination.mkdir()
     genome_controller.store.db_path = str(source)  # type: ignore[misc]
 
-    result = await genome_controller.export_db(directory=str(destination))
+    result = await genome_controller._run_export_db_job(directory=str(destination))
 
+    assert result is not None
     written = Path(result["path"])
     assert written.parent == destination
     assert result["bytes"] > 0
@@ -879,7 +1006,7 @@ async def test_export_db_refuses_a_directory_that_is_not_there(
     genome_controller.store.db_path = str(source)  # type: ignore[misc]
 
     with pytest.raises(InvalidDataError, match="not a directory this app can write to"):
-        await genome_controller.export_db(directory=str(tmp_path / "nope"))
+        await genome_controller._do_export_db(directory=str(tmp_path / "nope"))
 
 
 async def test_export_db_refuses_when_there_is_no_database_yet(
@@ -889,29 +1016,28 @@ async def test_export_db_refuses_when_there_is_no_database_yet(
     genome_controller.store.db_path = str(tmp_path / "missing.db")  # type: ignore[misc]
 
     with pytest.raises(InvalidDataError, match="No genome database"):
-        await genome_controller.export_db(directory=str(tmp_path))
+        await genome_controller._do_export_db(directory=str(tmp_path))
 
 
-async def test_export_db_action_button_reports_where_the_file_went(
+async def test_export_db_action_button_starts_the_job_without_waiting(
     genome_controller: GenomeController, tmp_path: Path
 ) -> None:
     """
-    The command needs a button, or it is not reachable.
+    The command needs a button, or it is not reachable from anywhere but a terminal.
 
-    A websocket command with no control anywhere in the UI can only be called from a terminal,
-    which is not a reasonable way to ask someone to back up their own data before a migration.
+    The button must dispatch rather than await: copying a 200,000-row database inside the
+    request is the same stall that made the first version of this look hung forever. The path
+    lands on the job, whose message outlives both the dialog and the page.
     """
     source = tmp_path / "genome.db"
     sqlite3.connect(source).close()
     genome_controller.store.db_path = str(source)  # type: ignore[misc]
-    genome_controller.export_db = partial(genome_controller.export_db, directory=str(tmp_path))  # type: ignore[method-assign]
 
     result = await genome_controller.handle_config_action(CONF_ACTION_EXPORT_DB)
 
     assert result is not None
-    assert result.translation_key == f"{CONF_ACTION_EXPORT_DB}.result"
-    # The path is the whole point: a backup nobody can find is not a backup.
-    assert str(tmp_path) in result.translation_args[1]
+    assert result.translation_key == f"{CONF_ACTION_EXPORT_DB}.started"
+    assert genome_controller.jobs.get_all()[JOB_EXPORT_DB]["state"] == "running"
 
 
 async def test_export_db_finds_a_mount_when_none_is_named(
@@ -931,7 +1057,7 @@ async def test_export_db_finds_a_mount_when_none_is_named(
     mount.mkdir()
     monkeypatch.setattr(controller_module, "GENOME_EXPORT_DIRS", ("/nope", str(mount)))
 
-    result = await genome_controller.export_db()
+    result = await genome_controller._do_export_db()
 
     assert Path(result["path"]).parent == mount
 
@@ -946,4 +1072,4 @@ async def test_export_db_says_what_is_missing_when_nothing_is_mounted(
     monkeypatch.setattr(controller_module, "GENOME_EXPORT_DIRS", ("/nope", "/also-nope"))
 
     with pytest.raises(InvalidDataError, match="no shared folder"):
-        await genome_controller.export_db()
+        await genome_controller._do_export_db()

@@ -83,6 +83,12 @@ _LASTFM_BACKFILL_DONE_KEY = "lastfm_backfill_done"
 # (see GenomeStore.unresolved_dismissed_keys / all_failed_artist_keys).
 _UNRESOLVED_DISMISSED_KEY = "unresolved_dismissed_keys"
 
+# settings-table key holding the persisted Listening Genome job map (see
+# `controllers/genome/jobs.py`): {job_id: JobState.to_dict()}. Same table and same json-typed
+# row shape as the keys above - a long import's outcome has to outlive both the websocket
+# request that started it and the process that ran it, and this is where it is written down.
+_JOBS_KEY = "jobs"
+
 
 class ArtistMetaWrite(TypedDict, total=False):
     """
@@ -490,6 +496,48 @@ class GenomeStore:
         if not isinstance(keys, list):  # pragma: no cover - defensive, malformed settings row
             return None
         return frozenset(keys)
+
+    async def set_jobs(self, data: dict) -> None:
+        """
+        Persist the whole Listening Genome job map (``controllers/genome/jobs.py``).
+
+        Written as one json-typed settings row, exactly like :meth:`dismiss_unresolved`: the map
+        is small, always rewritten as a whole, and never queried by parts, so a dedicated table
+        would buy nothing. What it buys instead is that the result of a multi-minute import
+        survives the user navigating away and the server restarting.
+
+        :param data: ``{job_id: job_state_dict}`` as produced by ``JobTracker.get_all()``.
+        """
+        assert self.database is not None
+        await self.database.insert_or_replace(
+            DB_TABLE_SETTINGS,
+            {
+                "key": _JOBS_KEY,
+                "value": json_dumps(data),
+                "type": "json",
+            },
+        )
+        await self.database.commit()
+
+    async def get_jobs(self) -> dict:
+        """
+        Return the persisted job map, or an empty dict when nothing has been recorded yet.
+
+        Defensive on purpose: a malformed or truncated row degrades to "no jobs recorded",
+        which the tracker renders as three idle jobs. A status row must never be able to stop
+        the controller from starting.
+        """
+        assert self.database is not None
+        row = await self.database.get_row(DB_TABLE_SETTINGS, {"key": _JOBS_KEY})
+        if row is None:
+            return {}
+        try:
+            data = json_loads(row["value"])
+        except Exception:  # pragma: no cover - defensive, malformed settings row
+            return {}
+        if not isinstance(data, dict):  # pragma: no cover - defensive, malformed settings row
+            return {}
+        return data
 
     async def mark_popularity_attempted(self, artist_keys: Sequence[str]) -> None:
         """

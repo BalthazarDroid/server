@@ -149,5 +149,7 @@ async def test_scheduled_poll_imports_and_logs_result(
             "warnings": [],
         }
 
-    genome_controller.import_lastfm = _fake_import_lastfm  # type: ignore[method-assign]
+    # the poll calls the blocking form, not the websocket command: it has no request to hand a
+    # result back to, and it needs the row counts it logs
+    genome_controller._do_import_lastfm = _fake_import_lastfm  # type: ignore[method-assign]
     await genome_controller._scheduled_lastfm_poll()  # should not raise

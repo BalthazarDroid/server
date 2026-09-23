@@ -98,6 +98,12 @@ from .discovery import (
 )
 from .engine import build_genome
 from .errors import LastfmNotConfiguredError
+from .jobs import (
+    JOB_APPLE_IMPORT,
+    JOB_EXPORT_DB,
+    JOB_LASTFM_IMPORT,
+    JobTracker,
+)
 from .models import (
     ColdArtist,
     DiscoveryResult,
@@ -211,6 +217,8 @@ class _GenomeStoreProtocol(Protocol):
     async def get_cached_discovery(self, listener: str) -> dict[str, Any] | None: ...
     async def set_cached_discovery(self, listener: str, data: Mapping[str, Any]) -> None: ...
     async def artist_play_counts(self, listener: str) -> dict[str, int]: ...
+    async def set_jobs(self, data: dict) -> None: ...
+    async def get_jobs(self) -> dict: ...
 
 
 class _UploadState:
@@ -223,6 +231,27 @@ class _UploadState:
         self.next_seq = 0
         self.total_bytes = 0
         self.created_at = time.monotonic()
+
+
+def _import_summary(label: str, result: GenomeImportResult) -> str:
+    """
+    Render an import result as the one sentence a person needs to read.
+
+    This text is the whole user-facing outcome once the request that started the import is
+    gone, so it carries the counts and any warnings rather than "import finished".
+
+    :param label: What ran, e.g. ``"Last.fm import"``.
+    :param result: The importer's own result dict.
+    """
+    summary = (
+        f"{label} finished: {result['rows_imported']} imported, "
+        f"{result['rows_skipped']} skipped, {result['rows_duplicate']} duplicate "
+        f"(of {result['rows_read']} rows read)"
+    )
+    warnings = list(result.get("warnings") or ())
+    if warnings:
+        summary += ". Warnings: " + "; ".join(warnings)
+    return summary
 
 
 def _create_default_store(mass: MusicAssistant) -> _GenomeStoreProtocol:
@@ -320,6 +349,9 @@ class GenomeController(CoreController):
             store if store is not None else _create_default_store(mass)
         )
         self.baseline: Baseline = uniform_baseline()
+        # outcome of the three long-running operations, written down rather than returned, so a
+        # result outlives both the websocket request that asked for it and this process
+        self.jobs = JobTracker(self.store)
         self.last_rebuild_at: int | None = None
         self._uploads: dict[str, _UploadState] = {}
         self._apple_parser = _default_apple_parser
@@ -421,11 +453,11 @@ class GenomeController(CoreController):
             await self.store.clear()
             return ConfigActionResult(translation_key=f"{CONF_ACTION_CLEAR_GENOME_DATA}.result")
         if action == CONF_ACTION_EXPORT_DB:
-            export = await self.export_db()
-            return ConfigActionResult(
-                translation_key=f"{CONF_ACTION_EXPORT_DB}.result",
-                translation_args=[str(export["listens"]), str(export["path"])],
-            )
+            # Dispatched, not awaited. A config action that copies a 200,000-row database
+            # inside the request is the same stall as the button that prompted all this; the
+            # job's message is where the path lands, on a card that survives navigation.
+            await self.export_db()
+            return ConfigActionResult(translation_key=f"{CONF_ACTION_EXPORT_DB}.started")
         return await super().handle_config_action(action)
 
     async def setup(self, config: CoreConfig) -> None:
@@ -440,6 +472,9 @@ class GenomeController(CoreController):
         """
         self.baseline = await load_baseline()
         await self.store.setup()
+        # must follow store.setup(): this is the first read of genome.db, and it is also where a
+        # job left "running" by a process that died is downgraded to an honest error
+        await self.jobs.load()
         playlog_importer = self._playlog_importer_factory(self.mass, self.store)
         self._unsubscribe_playlog = playlog_importer.attach()
         if not await self.store.backfill_done():
@@ -570,9 +605,65 @@ class GenomeController(CoreController):
             self.mass.create_task(self._background_enrichment())
         return result
 
+    @api_command("genome/jobs", required_scope=Scope.LIBRARY_READ)
+    @_log_command_errors("genome/jobs")
+    async def get_jobs(self) -> dict[str, Any]:
+        """
+        Return the last known state of every long-running Genome operation.
+
+        A pure, instant read of the in-memory job map (D-16: nothing a user waits on may touch
+        the network, and this one does not touch the database either). It is what makes the
+        result of a multi-minute import survive the user navigating away: the import writes its
+        outcome down through :class:`~music_assistant.controllers.genome.jobs.JobTracker`, and
+        whatever page is open next reads it back from here.
+        """
+        return self.jobs.get_all()
+
     @api_command("genome/export_db", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/export_db")
     async def export_db(self, directory: str = "") -> dict[str, Any]:
+        """
+        Start a ``genome.db`` snapshot in the background and return the job state immediately.
+
+        The copy itself can take a while on a real database, and it used to run inside the
+        websocket request: navigate away and the path it wrote to was lost forever. Now the
+        request only dispatches, and the outcome (path, size, listen count — or the reason it
+        failed) is recorded on ``genome/jobs``, which any later page load can read.
+
+        Returns the ``export_db`` entry of :meth:`get_jobs`, already marked ``running``.
+
+        :param directory: Where to write the snapshot. Left empty, the first writable mount in
+            :data:`GENOME_EXPORT_DIRS` is used.
+        """
+        await self.jobs.start(JOB_EXPORT_DB, "Exporting the Genome database…")
+        self.mass.create_task(self._run_export_db_job(directory))
+        return self.jobs.get(JOB_EXPORT_DB)
+
+    async def _run_export_db_job(self, directory: str = "") -> dict[str, Any] | None:
+        """
+        Background worker for :meth:`export_db`: do the copy, then write down what happened.
+
+        Never raises — it runs detached, so there is nobody left to catch anything. The message
+        it records is the same text it logs, because that message is the whole user-facing
+        result once the request that started it is gone.
+
+        :param directory: As :meth:`export_db`.
+        """
+        try:
+            result = await self._do_export_db(directory)
+        except Exception as err:
+            message = f"Genome database export failed: {err}"
+            await self.jobs.fail(JOB_EXPORT_DB, message)
+            LOGGER.warning("genome/export_db: %s", message)
+            return None
+        message = (
+            f"Exported {result['listens']} listens to {result['path']} ({result['bytes']} bytes)"
+        )
+        await self.jobs.finish(JOB_EXPORT_DB, message)
+        LOGGER.info("genome/export_db: %s", message)
+        return result
+
+    async def _do_export_db(self, directory: str = "") -> dict[str, Any]:
         """
         Write a consistent snapshot of ``genome.db`` somewhere reachable from outside the app.
 
@@ -721,23 +812,94 @@ class GenomeController(CoreController):
             if upload_id:
                 self._uploads.pop(upload_id, None)
             msg = f"Unsupported Apple export file: {filename or '(no filename given)'}"
+            await self.jobs.fail(JOB_APPLE_IMPORT, f"Apple Music import failed: {msg}")
             raise InvalidDataError(msg)
 
+        # the upload itself stays in the request (its progress is client-side, chunk by chunk),
+        # but the ingest that follows is the part that runs for minutes on a 300k-row export -
+        # so its outcome is written down here too, and survives the user navigating away
+        await self.jobs.start(JOB_APPLE_IMPORT, f"Importing {filename or path}…")
         try:
             result = await self._ingest_apple_csv(path)
+        except Exception as err:
+            message = f"Apple Music import failed: {err}"
+            await self.jobs.fail(JOB_APPLE_IMPORT, message)
+            LOGGER.warning("genome/import_apple: %s", message)
+            raise
         finally:
             if upload_id:
                 await self._cleanup_upload(upload_id)
+        message = _import_summary("Apple Music import", result)
+        await self.jobs.finish(JOB_APPLE_IMPORT, message)
+        LOGGER.info("genome/import_apple: %s", message)
         return result
 
     @api_command("genome/import_lastfm", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/import_lastfm")
-    async def import_lastfm(self, username: str = "", max_pages: int = 0) -> GenomeImportResult:
+    async def import_lastfm(self, username: str = "", max_pages: int = 0) -> dict[str, Any]:
         """
-        Poll Last.fm's ``user.getRecentTracks`` and ingest the result (§3.3, §3.8).
+        Start a Last.fm import in the background and return the job state immediately.
+
+        A full history sweep is paginated and can run for minutes. It used to run inside the
+        websocket request, so its result existed only as that request's return value: navigate
+        away mid-import and the row counts were lost, and a stall left a progress bar that never
+        finished with nothing in the log. Now the request validates the credentials (cheap, and
+        the one failure the user can fix right there), dispatches the fetch, and returns.
+
+        The outcome — rows imported/skipped plus any warnings, or the reason it failed — is
+        recorded on ``genome/jobs``.
+
+        Returns the ``lastfm_import`` entry of :meth:`get_jobs`, already marked ``running``.
 
         :param username: Overrides the configured ``lastfm_username`` when given.
         :param max_pages: Stop after this many pages; ``0`` means "until exhausted".
+        """
+        try:
+            resolved_username, _api_key = self._lastfm_credentials(username)
+        except LastfmNotConfiguredError as err:
+            # recorded as well as raised: the caller sees it now, and a page opened later still
+            # finds out why the import it started never produced anything
+            await self.jobs.fail(JOB_LASTFM_IMPORT, str(err))
+            raise
+        await self.jobs.start(
+            JOB_LASTFM_IMPORT, f"Importing scrobbles for {resolved_username} from Last.fm…"
+        )
+        self.mass.create_task(self._run_lastfm_import_job(username, max_pages))
+        return self.jobs.get(JOB_LASTFM_IMPORT)
+
+    async def _run_lastfm_import_job(
+        self, username: str = "", max_pages: int = 0
+    ) -> GenomeImportResult | None:
+        """
+        Background worker for :meth:`import_lastfm`: run the import, then write down the result.
+
+        Never raises — it runs detached. The message it records is the same text it logs.
+
+        :param username: As :meth:`import_lastfm`.
+        :param max_pages: As :meth:`import_lastfm`.
+        """
+        try:
+            result = await self._do_import_lastfm(username, max_pages)
+        except Exception as err:
+            message = f"Last.fm import failed: {err}"
+            await self.jobs.fail(JOB_LASTFM_IMPORT, message)
+            LOGGER.warning("genome/import_lastfm: %s", message)
+            return None
+        message = _import_summary("Last.fm import", result)
+        await self.jobs.finish(JOB_LASTFM_IMPORT, message)
+        LOGGER.info("genome/import_lastfm: %s", message)
+        return result
+
+    def _lastfm_credentials(self, username: str = "") -> tuple[str, str]:
+        """
+        Resolve and validate the Last.fm username and API key, or say exactly what is missing.
+
+        Split out of the import itself so the websocket request can still fail fast on the one
+        problem the user can fix on the spot, while the actual (slow) fetch runs in the
+        background.
+
+        :param username: Overrides the configured ``lastfm_username`` when given.
+        :raises LastfmNotConfiguredError: When either credential is missing or malformed.
         """
         username = username or self.get_config_value(
             CONF_LASTFM_USERNAME, DEFAULT_LASTFM_USERNAME, return_type=str
@@ -766,7 +928,20 @@ class GenomeController(CoreController):
                 "Copy it from https://www.last.fm/api/accounts and save it again."
             )
             raise LastfmNotConfiguredError(msg)
-        api_key = api_key.strip()
+        return username, api_key.strip()
+
+    @_log_command_errors("genome/import_lastfm")
+    async def _do_import_lastfm(self, username: str = "", max_pages: int = 0) -> GenomeImportResult:
+        """
+        Poll Last.fm's ``user.getRecentTracks`` and ingest the result (§3.3, §3.8).
+
+        The blocking form. Used by the background worker behind ``genome/import_lastfm`` and by
+        the scheduled poll, which has no websocket request to hand a result back to anyway.
+
+        :param username: Overrides the configured ``lastfm_username`` when given.
+        :param max_pages: Stop after this many pages; ``0`` means "until exhausted".
+        """
+        username, api_key = self._lastfm_credentials(username)
         importer = self._lastfm_importer_factory(self.mass, username=username, api_key=api_key)
         return cast(
             "GenomeImportResult",
@@ -914,7 +1089,7 @@ class GenomeController(CoreController):
     async def _scheduled_lastfm_poll(self) -> None:
         """Scheduled-task entry point: poll Last.fm for new scrobbles."""
         try:
-            result = await self.import_lastfm()
+            result = await self._do_import_lastfm()
         except LastfmNotConfiguredError:
             # config raced out from under an in-flight scheduled run; the next re-registration
             # (triggered by update_config) already handles unregistering the task itself
