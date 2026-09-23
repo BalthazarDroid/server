@@ -74,6 +74,7 @@ from .constants import (
     GENOME_ENRICHMENT_BATCH_LIMIT,
     GENOME_ENRICHMENT_TASK_ID,
     GENOME_EXPORT_DIRS,
+    GENOME_EXPORT_POLL_SECONDS,
     GENOME_LASTFM_POLL_TASK_ID,
     GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
     GENOME_REBUILD_TASK_ID,
@@ -704,7 +705,22 @@ class GenomeController(CoreController):
 
         stamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
         target = os.path.join(directory, f"genome-export-{stamp}.db")
-        await asyncio.to_thread(_backup_sqlite, store_path, target)
+        source_bytes = await asyncio.to_thread(os.path.getsize, store_path)
+        # Logged before the copy starts, not only after it ends. A background job whose first
+        # and only line is its result cannot be told apart from one that never ran.
+        LOGGER.info(
+            "Genome database export starting: %s (%d bytes) -> %s", store_path, source_bytes, target
+        )
+        progress = _BackupProgress()
+        copy = asyncio.create_task(asyncio.to_thread(_backup_sqlite, store_path, target, progress))
+        try:
+            while not copy.done():
+                await asyncio.wait({copy}, timeout=GENOME_EXPORT_POLL_SECONDS)
+                await self.jobs.update(JOB_EXPORT_DB, progress=progress.percent)
+            await copy
+        except Exception:
+            copy.cancel()
+            raise
         size = await asyncio.to_thread(os.path.getsize, target)
         listens = await self.store.count_listens(LISTENER_HOUSEHOLD)
         LOGGER.info("Genome database exported to %s (%d bytes, %d listens)", target, size, listens)
@@ -1711,24 +1727,47 @@ def _empty_import_result(source: str) -> GenomeImportResult:
 __all__ = ["GenomeController"]
 
 
-def _backup_sqlite(source: str, target: str) -> None:
+class _BackupProgress:
+    """Shared counter a backup thread writes and the event loop reads."""
+
+    __slots__ = ("done", "percent")
+
+    def __init__(self) -> None:
+        """Start at nothing copied."""
+        self.percent = 0
+        self.done = False
+
+
+def _backup_sqlite(source: str, target: str, progress: _BackupProgress) -> None:
     """
     Copy a live sqlite database to ``target`` as a consistent snapshot.
 
+    Copied a page-batch at a time rather than in one call, purely so it can report where it is.
+    A single ``backup(dst)`` gives no sign of life, and an export that shows nothing for minutes
+    is indistinguishable from one that has hung - which is exactly how this looked.
+
     :param source: Path of the database to read.
     :param target: Path to write the snapshot to.
+    :param progress: Counter this thread updates as pages are copied.
     """
     import sqlite3  # noqa: PLC0415
 
-    src = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    def report(_status: int, remaining: int, total: int) -> None:
+        if total > 0:
+            progress.percent = int(((total - remaining) / total) * 100)
+
+    # A 5-second busy timeout, not the default: the source is open and being written to by the
+    # server itself, and the point of a timeout is to fail with a lock error rather than sit.
+    src = sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=5.0)
     try:
         dst = sqlite3.connect(target)
         try:
-            src.backup(dst)
+            src.backup(dst, pages=2048, progress=report)
         finally:
             dst.close()
     finally:
         src.close()
+        progress.done = True
 
 
 def _is_writable_dir(path: str) -> bool:

@@ -1073,3 +1073,38 @@ async def test_export_db_says_what_is_missing_when_nothing_is_mounted(
 
     with pytest.raises(InvalidDataError, match="no shared folder"):
         await genome_controller._do_export_db()
+
+
+async def test_export_reports_progress_while_it_copies(
+    genome_controller: GenomeController, tmp_path: Path
+) -> None:
+    """
+    A long copy has to show its work.
+
+    The export logged only on completion, so a job that had hung for twenty minutes and one
+    that was halfway through looked identical: "running", no progress, nothing in the log.
+    sqlite's backup API knows exactly how many pages remain, so there is no excuse for
+    an indeterminate bar here.
+    """
+    source = tmp_path / "genome.db"
+    connection = sqlite3.connect(source)
+    connection.execute("CREATE TABLE big (id INTEGER PRIMARY KEY, blob TEXT)")
+    connection.executemany(
+        "INSERT INTO big (blob) VALUES (?)", [("x" * 2000,) for _ in range(6000)]
+    )
+    connection.commit()
+    connection.close()
+    genome_controller.store.db_path = str(source)  # type: ignore[misc]
+
+    result = await genome_controller._do_export_db(directory=str(tmp_path))
+
+    assert Path(result["path"]).exists()
+    assert result["bytes"] > 0
+    # It must land on 100, not stop wherever the last poll happened to catch it.
+    assert genome_controller.jobs.get_all()[JOB_EXPORT_DB]["progress"] in (None, 100)
+    # And the copy has to be readable, which is the only thing that makes it a backup.
+    copy = sqlite3.connect(result["path"])
+    try:
+        assert copy.execute("SELECT COUNT(*) FROM big").fetchone()[0] == 6000
+    finally:
+        copy.close()
