@@ -19,6 +19,7 @@ import pytest
 from music_assistant_models.enums import ConfigEntryType
 from music_assistant_models.errors import InvalidDataError
 
+from music_assistant.controllers.genome import controller as controller_module
 from music_assistant.controllers.genome.constants import (
     CONF_ACTION_CLEAR_GENOME_DATA,
     CONF_ACTION_EXPORT_DB,
@@ -877,7 +878,7 @@ async def test_export_db_refuses_a_directory_that_is_not_there(
     sqlite3.connect(source).close()
     genome_controller.store.db_path = str(source)  # type: ignore[misc]
 
-    with pytest.raises(InvalidDataError, match="does not exist"):
+    with pytest.raises(InvalidDataError, match="not a directory this app can write to"):
         await genome_controller.export_db(directory=str(tmp_path / "nope"))
 
 
@@ -911,3 +912,38 @@ async def test_export_db_action_button_reports_where_the_file_went(
     assert result.translation_key == f"{CONF_ACTION_EXPORT_DB}.result"
     # The path is the whole point: a backup nobody can find is not a backup.
     assert str(tmp_path) in result.translation_args[1]
+
+
+async def test_export_db_finds_a_mount_when_none_is_named(
+    genome_controller: GenomeController, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The default must be discovered, not assumed.
+
+    Hardcoding "/share" cost a round trip: the MA DEV app does not map it, so the export failed
+    with "the data provided is invalid" and the reason only existed in the app log. Which folders
+    an app maps is not knowable from inside it, so the command looks.
+    """
+    source = tmp_path / "genome.db"
+    sqlite3.connect(source).close()
+    genome_controller.store.db_path = str(source)  # type: ignore[misc]
+    mount = tmp_path / "media"
+    mount.mkdir()
+    monkeypatch.setattr(controller_module, "GENOME_EXPORT_DIRS", ("/nope", str(mount)))
+
+    result = await genome_controller.export_db()
+
+    assert Path(result["path"]).parent == mount
+
+
+async def test_export_db_says_what_is_missing_when_nothing_is_mounted(
+    genome_controller: GenomeController, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An app with no shared folder has to say so, and name what it looked for."""
+    source = tmp_path / "genome.db"
+    sqlite3.connect(source).close()
+    genome_controller.store.db_path = str(source)  # type: ignore[misc]
+    monkeypatch.setattr(controller_module, "GENOME_EXPORT_DIRS", ("/nope", "/also-nope"))
+
+    with pytest.raises(InvalidDataError, match="no shared folder"):
+        await genome_controller.export_db()

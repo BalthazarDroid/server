@@ -73,7 +73,7 @@ from .constants import (
     GENOME_DISCOVERY_TASK_ID,
     GENOME_ENRICHMENT_BATCH_LIMIT,
     GENOME_ENRICHMENT_TASK_ID,
-    GENOME_EXPORT_DIR,
+    GENOME_EXPORT_DIRS,
     GENOME_LASTFM_POLL_TASK_ID,
     GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
     GENOME_REBUILD_TASK_ID,
@@ -572,7 +572,7 @@ class GenomeController(CoreController):
 
     @api_command("genome/export_db", required_scope=Scope.LIBRARY_MANAGE)
     @_log_command_errors("genome/export_db")
-    async def export_db(self, directory: str = GENOME_EXPORT_DIR) -> dict[str, Any]:
+    async def export_db(self, directory: str = "") -> dict[str, Any]:
         """
         Write a consistent snapshot of ``genome.db`` somewhere reachable from outside the app.
 
@@ -587,18 +587,29 @@ class GenomeController(CoreController):
         database is open and being written to; copying the file would capture a torn page or
         miss the write-ahead log and produce something that only looks like a database.
 
-        :param directory: Where to write the snapshot. Defaults to the app's ``/share`` mount.
+        :param directory: Where to write the snapshot. Left empty, the first writable mount in
+            :data:`GENOME_EXPORT_DIRS` is used.
         """
         store_path = self.store.db_path
         if not Path(store_path).exists():
             msg = f"No genome database at {store_path}"
             raise InvalidDataError(msg)
-        if not Path(directory).is_dir():
-            msg = (
-                f"{directory} does not exist. Pass a directory this app can write to - "
-                "'/share' and '/media' are the usual ones."
-            )
-            raise InvalidDataError(msg)
+
+        if directory:
+            if not await asyncio.to_thread(_is_writable_dir, directory):
+                msg = f"{directory} is not a directory this app can write to"
+                raise InvalidDataError(msg)
+        else:
+            candidates = await asyncio.to_thread(_writable_export_dirs)
+            if not candidates:
+                msg = (
+                    "This app has no shared folder to export into - none of "
+                    + ", ".join(GENOME_EXPORT_DIRS)
+                    + " is mounted and writable. Add one to the app's folder mapping, or pass a "
+                    "directory explicitly."
+                )
+                raise InvalidDataError(msg)
+            directory = candidates[0]
 
         stamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
         target = os.path.join(directory, f"genome-export-{stamp}.db")
@@ -1543,3 +1554,13 @@ def _backup_sqlite(source: str, target: str) -> None:
             dst.close()
     finally:
         src.close()
+
+
+def _is_writable_dir(path: str) -> bool:
+    """Whether ``path`` is a directory this process can create files in."""
+    return Path(path).is_dir() and os.access(path, os.W_OK)
+
+
+def _writable_export_dirs() -> list[str]:
+    """Which of the candidate export mounts this app actually has, most useful first."""
+    return [path for path in GENOME_EXPORT_DIRS if _is_writable_dir(path)]

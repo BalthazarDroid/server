@@ -140,10 +140,20 @@ GENOME_LASTFM_POLL_TASK_ID: Final[str] = "genome_lastfm_poll"
 
 GENOME_UPLOADS_DIRNAME: Final[str] = "genome_uploads"
 
-# Default destination for the TEMPORARY genome/export_db command. "/share" is mounted into the
-# app and visible from the file editor and Samba, which is the point: the database itself lives
-# in the app's private /data, where nothing outside the container can reach it.
-GENOME_EXPORT_DIR: Final[str] = "/share"
+# Candidate destinations for the TEMPORARY genome/export_db command, most useful first. The
+# database lives in the app's private /data, which nothing outside the container can reach, so
+# the export has to land on a mounted share - and which ones a given app maps is not knowable
+# from in here. The DEV app does not map /share, which is what an assumed default cost us. So
+# the command probes this list and says what it found rather than failing on one guess.
+GENOME_EXPORT_DIRS: Final[tuple[str, ...]] = (
+    "/share",
+    "/media",
+    "/config",
+    "/homeassistant",
+    "/addon_configs",
+    "/addons",
+    "/backup",
+)
 GENOME_UPLOAD_CHUNK_MAX_B64_BYTES: Final[int] = 512 * 1024
 GENOME_UPLOAD_MAX_TOTAL_BYTES: Final[int] = 512 * 1024 * 1024
 GENOME_UPLOAD_TTL_SECONDS: Final[int] = 15 * 60

@@ -50,7 +50,7 @@
     },
     "export_db": {
       "label": "Export genome database",
-      "description": "Write a copy of the genome database to /share, where the file editor and Samba can reach it. Temporary, for moving this data to the standalone integration."
+      "description": "Write a copy of the genome database to the first shared folder this app can reach, so the file editor or Samba can pick it up. Temporary, for moving this data to the standalone integration."
     }
   },
   "config_actions": {
