@@ -106,6 +106,7 @@ DEFAULT_REBUILD_SCHEDULE_HOUR: Final[int] = 4
 
 CONF_ACTION_REBUILD_NOW: Final[str] = "rebuild_now"
 CONF_ACTION_CLEAR_GENOME_DATA: Final[str] = "clear_genome_data"
+CONF_ACTION_EXPORT_DB: Final[str] = "export_db"
 
 # --- listen sources (§3.1, §3.8) -----------------------------------------------------
 

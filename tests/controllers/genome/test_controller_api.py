@@ -11,6 +11,7 @@ import asyncio
 import base64
 import logging
 import sqlite3
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -20,6 +21,7 @@ from music_assistant_models.errors import InvalidDataError
 
 from music_assistant.controllers.genome.constants import (
     CONF_ACTION_CLEAR_GENOME_DATA,
+    CONF_ACTION_EXPORT_DB,
     CONF_ACTION_REBUILD_NOW,
     CONF_APPLE_IMPORT_DIR,
     CONF_LASTFM_API_KEY,
@@ -101,6 +103,7 @@ async def test_config_entries_cover_every_documented_key(
         "min_seconds_played",
         "rebuild_schedule_hour",
         CONF_ACTION_REBUILD_NOW,
+        CONF_ACTION_EXPORT_DB,
         CONF_ACTION_CLEAR_GENOME_DATA,
     }
 
@@ -886,3 +889,25 @@ async def test_export_db_refuses_when_there_is_no_database_yet(
 
     with pytest.raises(InvalidDataError, match="No genome database"):
         await genome_controller.export_db(directory=str(tmp_path))
+
+
+async def test_export_db_action_button_reports_where_the_file_went(
+    genome_controller: GenomeController, tmp_path: Path
+) -> None:
+    """
+    The command needs a button, or it is not reachable.
+
+    A websocket command with no control anywhere in the UI can only be called from a terminal,
+    which is not a reasonable way to ask someone to back up their own data before a migration.
+    """
+    source = tmp_path / "genome.db"
+    sqlite3.connect(source).close()
+    genome_controller.store.db_path = str(source)  # type: ignore[misc]
+    genome_controller.export_db = partial(genome_controller.export_db, directory=str(tmp_path))  # type: ignore[method-assign]
+
+    result = await genome_controller.handle_config_action(CONF_ACTION_EXPORT_DB)
+
+    assert result is not None
+    assert result.translation_key == f"{CONF_ACTION_EXPORT_DB}.result"
+    # The path is the whole point: a backup nobody can find is not a backup.
+    assert str(tmp_path) in result.translation_args[1]

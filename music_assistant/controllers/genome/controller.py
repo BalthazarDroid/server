@@ -35,6 +35,7 @@ from music_assistant.models.core_controller import CoreController
 from .baseline import load_baseline, uniform_baseline
 from .constants import (
     CONF_ACTION_CLEAR_GENOME_DATA,
+    CONF_ACTION_EXPORT_DB,
     CONF_ACTION_REBUILD_NOW,
     CONF_APPLE_IMPORT_DIR,
     CONF_ENRICH_ENABLED,
@@ -398,6 +399,7 @@ class GenomeController(CoreController):
             ),
             ConfigEntry(key=CONF_ACTION_REBUILD_NOW, type=ConfigEntryType.ACTION),
             ConfigEntry(key=CONF_ACTION_CLEAR_GENOME_DATA, type=ConfigEntryType.ACTION),
+            ConfigEntry(key=CONF_ACTION_EXPORT_DB, type=ConfigEntryType.ACTION),
         )
 
     async def handle_config_action(
@@ -418,6 +420,12 @@ class GenomeController(CoreController):
         if action == CONF_ACTION_CLEAR_GENOME_DATA:
             await self.store.clear()
             return ConfigActionResult(translation_key=f"{CONF_ACTION_CLEAR_GENOME_DATA}.result")
+        if action == CONF_ACTION_EXPORT_DB:
+            export = await self.export_db()
+            return ConfigActionResult(
+                translation_key=f"{CONF_ACTION_EXPORT_DB}.result",
+                translation_args=[str(export["listens"]), str(export["path"])],
+            )
         return await super().handle_config_action(action)
 
     async def setup(self, config: CoreConfig) -> None:

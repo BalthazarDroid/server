@@ -47,6 +47,10 @@
     "clear_genome_data": {
       "label": "Clear genome data",
       "description": "Delete all imported listens and cached genome results for this household."
+    },
+    "export_db": {
+      "label": "Export genome database",
+      "description": "Write a copy of the genome database to /share, where the file editor and Samba can reach it. Temporary, for moving this data to the standalone integration."
     }
   },
   "config_actions": {
@@ -56,6 +60,9 @@
     },
     "clear_genome_data": {
       "result": "All genome data has been cleared"
+    },
+    "export_db": {
+      "result": "Exported {0} listens to {1}"
     }
   },
   "background_task": {
