@@ -218,6 +218,7 @@ class _GenomeStoreProtocol(Protocol):
     async def get_cached_discovery(self, listener: str) -> dict[str, Any] | None: ...
     async def set_cached_discovery(self, listener: str, data: Mapping[str, Any]) -> None: ...
     async def artist_play_counts(self, listener: str) -> dict[str, int]: ...
+    async def snapshot_to(self, target: str) -> None: ...
     async def set_jobs(self, data: dict) -> None: ...
     async def get_jobs(self) -> dict: ...
 
@@ -714,14 +715,12 @@ class GenomeController(CoreController):
         # Bounded, so a stall can never again present as an export that runs forever.
         try:
             await asyncio.wait_for(
-                asyncio.to_thread(_backup_sqlite, store_path, target),
-                timeout=GENOME_EXPORT_TIMEOUT_SECONDS,
+                self.store.snapshot_to(target), timeout=GENOME_EXPORT_TIMEOUT_SECONDS
             )
         except TimeoutError:
             msg = (
                 f"The copy did not finish within {GENOME_EXPORT_TIMEOUT_SECONDS} seconds. "
-                f"The database is {source_bytes} bytes and should take about a second, so "
-                "something is holding a lock on it."
+                f"The database is {source_bytes} bytes and should take about a second."
             )
             raise InvalidDataError(msg) from None
         size = await asyncio.to_thread(os.path.getsize, target)
@@ -1728,40 +1727,6 @@ def _empty_import_result(source: str) -> GenomeImportResult:
 
 
 __all__ = ["GenomeController"]
-
-
-def _backup_sqlite(source: str, target: str) -> None:
-    """
-    Copy a live sqlite database to ``target`` as a consistent snapshot, in one step.
-
-    The one step is the whole point, and the reason this function is worth a comment.
-
-    sqlite restarts a backup from the beginning whenever the source is written to between
-    steps. A previous version copied in page batches so it could report a percentage, and
-    published that percentage by writing it to the job table - which lives in this very
-    database. Every write restarted the copy, so a 75MB export ran 9,401 steps in sixty
-    seconds and never finished. Reproduced exactly, before it was believed.
-
-    ``pages=-1`` copies everything while holding one read lock, which cannot be restarted.
-    It also means no progress callbacks, and that is the right trade: the copy takes about a
-    second, so there is nothing to report on.
-
-    :param source: Path of the database to read.
-    :param target: Path to write the snapshot to.
-    """
-    import sqlite3  # noqa: PLC0415
-
-    # An explicit busy timeout, not the default: the source is open and being written to by
-    # this same server, so a lock should fail with a lock error rather than sit.
-    src = sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=5.0)
-    try:
-        dst = sqlite3.connect(target)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
 
 
 def _is_writable_dir(path: str) -> bool:

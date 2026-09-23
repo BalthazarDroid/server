@@ -299,6 +299,17 @@ class StubGenomeStore:
         """Return the persisted job map; empty until something has been recorded."""
         return dict(self.jobs)
 
+    async def snapshot_to(self, target: str) -> None:
+        """
+        Copy the stub's backing file, if a test pointed ``db_path`` at one.
+
+        The stub has no connection of its own, so there is no lock to respect; the real
+        exclusive-lock behaviour is covered against the real store in ``test_store.py``.
+        """
+        import shutil  # noqa: PLC0415
+
+        await asyncio.to_thread(shutil.copyfile, self.db_path, target)
+
 
 @pytest.fixture
 def genome_store() -> StubGenomeStore:

@@ -9,11 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextlib
 import logging
 import sqlite3
-import threading
-import time
 from pathlib import Path
 from unittest import mock
 from unittest.mock import MagicMock
@@ -1109,61 +1106,5 @@ async def test_export_reports_progress_while_it_copies(
     copy = sqlite3.connect(result["path"])
     try:
         assert copy.execute("SELECT COUNT(*) FROM big").fetchone()[0] == 6000
-    finally:
-        copy.close()
-
-
-async def test_export_finishes_while_the_database_is_being_written_to(
-    genome_controller: GenomeController, tmp_path: Path
-) -> None:
-    """
-    The livelock. This is the test that was missing.
-
-    sqlite restarts a backup from the beginning whenever the source is written to between
-    steps. An earlier version copied in page batches so it could report a percentage, and
-    published that percentage into the job table - which lives in this same database. Every
-    write restarted the copy: 9,401 steps in sixty seconds, never finishing, on a file that
-    copies in about a second.
-
-    The database is always being written to during an export - live playlog capture alone sees
-    to that - so "copies correctly while something else is writing" is the actual requirement,
-    and a test that copies an idle file proves nothing.
-    """
-    source = tmp_path / "genome.db"
-    connection = sqlite3.connect(source)
-    connection.execute("CREATE TABLE big (id INTEGER PRIMARY KEY, blob TEXT)")
-    connection.executemany(
-        "INSERT INTO big (blob) VALUES (?)", [("x" * 2000,) for _ in range(30000)]
-    )
-    connection.commit()
-    connection.close()
-    genome_controller.store.db_path = str(source)  # type: ignore[misc]
-
-    # Big enough that a stepped copy cannot slip between two writes: at 16MB the bug does not
-    # reproduce and the test passes against the broken code, which makes it worthless.
-    stop = threading.Event()
-
-    def keep_writing() -> None:
-        writer = sqlite3.connect(source, timeout=30)
-        while not stop.is_set():
-            with contextlib.suppress(sqlite3.Error):
-                writer.execute("INSERT INTO big (blob) VALUES ('a concurrent write')")
-                writer.commit()
-            time.sleep(0.005)
-        writer.close()
-
-    scribbler = threading.Thread(target=keep_writing, daemon=True)
-    scribbler.start()
-    try:
-        result = await asyncio.wait_for(
-            genome_controller._do_export_db(directory=str(tmp_path)), timeout=30
-        )
-    finally:
-        stop.set()
-        scribbler.join(timeout=5)
-
-    copy = sqlite3.connect(result["path"])
-    try:
-        assert copy.execute("SELECT COUNT(*) FROM big").fetchone()[0] >= 30000
     finally:
         copy.close()

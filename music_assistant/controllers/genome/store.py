@@ -119,6 +119,26 @@ class GenomeStore:
         """Filesystem path of ``genome.db``."""
         return os.path.join(self.mass.storage_path, "genome.db")
 
+    async def snapshot_to(self, target: str) -> None:
+        """
+        Write a consistent copy of ``genome.db`` to ``target``, through this store's own connection.
+
+        It has to be this connection. Music Assistant opens every database with
+        ``PRAGMA locking_mode=exclusive`` over WAL: the connection that takes the lock never
+        releases it, and the WAL index lives in its private memory, so no second connection can
+        read the file at all - not to back it up, not read-only, not ever. The export spent two
+        rounds opening a second connection and waiting on a lock that could not be granted.
+
+        ``VACUUM INTO`` on the owning connection sidesteps all of that, and produces a compacted,
+        transactionally consistent file. It cannot run inside a transaction, so anything pending
+        is committed first.
+
+        :param target: Path of the file to create. It must not already exist.
+        """
+        assert self.database is not None
+        await self.database.commit()
+        await self.database.execute("VACUUM INTO :target", {"target": target})
+
     def __init__(self, mass: MusicAssistant) -> None:
         """
         Initialize the store.

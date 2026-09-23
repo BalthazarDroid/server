@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 import time
 import types
 from typing import TYPE_CHECKING
@@ -550,3 +552,82 @@ async def test_dismiss_unresolved_overwrites_previous_fingerprint(tmp_path: Path
         assert await store.unresolved_dismissed_keys() == frozenset({"b"})
     finally:
         await store.close()
+
+
+async def test_snapshot_works_while_the_store_holds_its_exclusive_lock(tmp_path: Path) -> None:
+    """
+    The export bug, against the real store and the real lock.
+
+    Music Assistant opens every database with ``PRAGMA locking_mode=exclusive`` over WAL, so
+    the store's connection holds its lock for life and no second connection can read the file.
+    The export spent two rounds opening a second connection and waiting on a lock that could
+    never be granted - two minutes to fail on a 75MB file. The snapshot must go through the
+    store's own connection, and this proves that one works while the lock is held.
+    """
+    store = await _new_store(tmp_path)
+    try:
+        await store.add_listens(
+            [_listen(played_at=1_700_000_000 + i, track_key=f"t{i}") for i in range(500)],
+            listener="household",
+        )
+        # Prove the premise rather than assume it: a second connection really is locked out.
+        blocked = await asyncio.to_thread(_second_connection_can_read, store.db_path)
+        assert not blocked, "a second connection read the file - the premise of this test is gone"
+
+        target = str(tmp_path / "export.db")
+        await asyncio.wait_for(store.snapshot_to(target), timeout=10)
+
+        copy = sqlite3.connect(target)
+        try:
+            assert copy.execute("SELECT COUNT(*) FROM genome_listens").fetchone()[0] == 500
+        finally:
+            copy.close()
+    finally:
+        await store.close()
+
+
+async def test_snapshot_is_consistent_while_listens_keep_arriving(tmp_path: Path) -> None:
+    """
+    A snapshot taken while listens are still arriving must be a real database.
+
+    The database is always being written to during an export - live playlog capture alone
+    sees to that - so a torn copy that only looks like a database is the failure to rule out.
+    """
+    store = await _new_store(tmp_path)
+    try:
+        await store.add_listens(
+            [_listen(played_at=1_700_000_000 + i, track_key=f"t{i}") for i in range(300)],
+            listener="household",
+        )
+
+        async def keep_writing() -> None:
+            for i in range(300, 600):
+                await store.add_listens(
+                    [_listen(played_at=1_700_000_000 + i, track_key=f"t{i}")], listener="household"
+                )
+
+        target = str(tmp_path / "export.db")
+        await asyncio.gather(keep_writing(), store.snapshot_to(target))
+
+        copy = sqlite3.connect(target)
+        try:
+            assert copy.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            count = copy.execute("SELECT COUNT(*) FROM genome_listens").fetchone()[0]
+            assert 300 <= count <= 600
+        finally:
+            copy.close()
+    finally:
+        await store.close()
+
+
+def _second_connection_can_read(path: str) -> bool:
+    """Whether an independent connection can read ``path`` within a couple of seconds."""
+    try:
+        other = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            other.execute("SELECT COUNT(*) FROM genome_listens").fetchone()
+        finally:
+            other.close()
+    except sqlite3.OperationalError:
+        return False
+    return True
