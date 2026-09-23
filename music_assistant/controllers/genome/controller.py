@@ -74,7 +74,7 @@ from .constants import (
     GENOME_ENRICHMENT_BATCH_LIMIT,
     GENOME_ENRICHMENT_TASK_ID,
     GENOME_EXPORT_DIRS,
-    GENOME_EXPORT_POLL_SECONDS,
+    GENOME_EXPORT_TIMEOUT_SECONDS,
     GENOME_LASTFM_POLL_TASK_ID,
     GENOME_MB_ENRICHMENT_MIN_INTERVAL_SECONDS,
     GENOME_REBUILD_TASK_ID,
@@ -711,16 +711,19 @@ class GenomeController(CoreController):
         LOGGER.info(
             "Genome database export starting: %s (%d bytes) -> %s", store_path, source_bytes, target
         )
-        progress = _BackupProgress()
-        copy = asyncio.create_task(asyncio.to_thread(_backup_sqlite, store_path, target, progress))
+        # Bounded, so a stall can never again present as an export that runs forever.
         try:
-            while not copy.done():
-                await asyncio.wait({copy}, timeout=GENOME_EXPORT_POLL_SECONDS)
-                await self.jobs.update(JOB_EXPORT_DB, progress=progress.percent)
-            await copy
-        except Exception:
-            copy.cancel()
-            raise
+            await asyncio.wait_for(
+                asyncio.to_thread(_backup_sqlite, store_path, target),
+                timeout=GENOME_EXPORT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            msg = (
+                f"The copy did not finish within {GENOME_EXPORT_TIMEOUT_SECONDS} seconds. "
+                f"The database is {source_bytes} bytes and should take about a second, so "
+                "something is holding a lock on it."
+            )
+            raise InvalidDataError(msg) from None
         size = await asyncio.to_thread(os.path.getsize, target)
         listens = await self.store.count_listens(LISTENER_HOUSEHOLD)
         LOGGER.info("Genome database exported to %s (%d bytes, %d listens)", target, size, listens)
@@ -1727,47 +1730,38 @@ def _empty_import_result(source: str) -> GenomeImportResult:
 __all__ = ["GenomeController"]
 
 
-class _BackupProgress:
-    """Shared counter a backup thread writes and the event loop reads."""
-
-    __slots__ = ("done", "percent")
-
-    def __init__(self) -> None:
-        """Start at nothing copied."""
-        self.percent = 0
-        self.done = False
-
-
-def _backup_sqlite(source: str, target: str, progress: _BackupProgress) -> None:
+def _backup_sqlite(source: str, target: str) -> None:
     """
-    Copy a live sqlite database to ``target`` as a consistent snapshot.
+    Copy a live sqlite database to ``target`` as a consistent snapshot, in one step.
 
-    Copied a page-batch at a time rather than in one call, purely so it can report where it is.
-    A single ``backup(dst)`` gives no sign of life, and an export that shows nothing for minutes
-    is indistinguishable from one that has hung - which is exactly how this looked.
+    The one step is the whole point, and the reason this function is worth a comment.
+
+    sqlite restarts a backup from the beginning whenever the source is written to between
+    steps. A previous version copied in page batches so it could report a percentage, and
+    published that percentage by writing it to the job table - which lives in this very
+    database. Every write restarted the copy, so a 75MB export ran 9,401 steps in sixty
+    seconds and never finished. Reproduced exactly, before it was believed.
+
+    ``pages=-1`` copies everything while holding one read lock, which cannot be restarted.
+    It also means no progress callbacks, and that is the right trade: the copy takes about a
+    second, so there is nothing to report on.
 
     :param source: Path of the database to read.
     :param target: Path to write the snapshot to.
-    :param progress: Counter this thread updates as pages are copied.
     """
     import sqlite3  # noqa: PLC0415
 
-    def report(_status: int, remaining: int, total: int) -> None:
-        if total > 0:
-            progress.percent = int(((total - remaining) / total) * 100)
-
-    # A 5-second busy timeout, not the default: the source is open and being written to by the
-    # server itself, and the point of a timeout is to fail with a lock error rather than sit.
+    # An explicit busy timeout, not the default: the source is open and being written to by
+    # this same server, so a lock should fail with a lock error rather than sit.
     src = sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=5.0)
     try:
         dst = sqlite3.connect(target)
         try:
-            src.backup(dst, pages=2048, progress=report)
+            src.backup(dst)
         finally:
             dst.close()
     finally:
         src.close()
-        progress.done = True
 
 
 def _is_writable_dir(path: str) -> bool:

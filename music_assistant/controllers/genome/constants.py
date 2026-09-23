@@ -145,8 +145,9 @@ GENOME_UPLOADS_DIRNAME: Final[str] = "genome_uploads"
 # the export has to land on a mounted share - and which ones a given app maps is not knowable
 # from in here. The DEV app does not map /share, which is what an assumed default cost us. So
 # the command probes this list and says what it found rather than failing on one guess.
-# How often the export reports its page progress while the copy runs in a thread.
-GENOME_EXPORT_POLL_SECONDS: Final[float] = 1.0
+# Ceiling on the database export. A 75MB copy takes about a second; anything approaching
+# this means something is holding a lock, and saying so beats running forever.
+GENOME_EXPORT_TIMEOUT_SECONDS: Final[float] = 120.0
 
 GENOME_EXPORT_DIRS: Final[tuple[str, ...]] = (
     "/share",
